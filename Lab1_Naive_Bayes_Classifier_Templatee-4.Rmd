@@ -142,14 +142,14 @@ library(ggplot2)
 
 ```{r}
 list.files(getwd())
-list.files("data/0-authors")
+list.files("data/4-spam/")
 ```
 
 ```{r}
-test_path <- "data/0-authors/test.csv"
-train_path <- "data/0-authors/train.csv"
+test_path <- "data/4-spam/test.csv"
+train_path <- "data/4-spam/train.csv"
 
-stop_words <- read_file("stop_words.txt")
+stop_words <- read_file("data/stop_words.txt")
 # https://stackoverflow.com/questions/27195912/why-does-strsplit-return-a-list
 splitted_stop_words <- strsplit(stop_words, split='\n')
 splitted_stop_words <- splitted_stop_words[[1]]
@@ -161,9 +161,9 @@ test <-  read.csv(file = test_path, stringsAsFactors = FALSE)
 ```
 
 ```{r}
-# note the power functional features of R bring us! 
-tidy_text <- unnest_tokens(train, 'splitted', 'text', token="words") %>%
-             filter(!splitted %in% stop_words)
+# note the power functional features of R bring us!
+tidy_text <- unnest_tokens(train, 'splitted', 'Message', token="words") %>%
+             filter(!splitted %in% splitted_stop_words)
 
 tidy_text %>% count(splitted,sort=TRUE)
 ```
@@ -179,30 +179,30 @@ positive examples as a histogram, word cloud etc. Be creative!
 
 ```{r}
 naiveBayes <- setRefClass("naiveBayes",
-                          
+
        # here it would be wise to have some vars to store intermediate result
-       # frequency dict etc. Though pay attention to bag of words! 
+       # frequency dict etc. Though pay attention to bag of words!
        fields = list(),
        methods = list(
                     # prepare your training data as X - bag of words for each of your
-                    # messages and corresponding label for the message encoded as 0 or 1 
+                    # messages and corresponding label for the message encoded as 0 or 1
                     # (binary classification task)
                     fit = function(X, y)
                     {
                          # TODO
                     },
-                    
-                    # return prediction for a single message 
+
+                    # return prediction for a single message
                     predict = function(message)
                     {
                          # TODO
                     },
-                    
+
                     # score you test set so to get the understanding how well you model
                     # works.
                     # look at f1 score or precision and recall
-                    # visualize them 
-                    # try how well your model generalizes to real world data! 
+                    # visualize them
+                    # try how well your model generalizes to real world data!
                     score = function(X_test, y_test)
                     {
                          # TODO

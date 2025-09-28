@@ -1,0 +1,281 @@
+---
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Probability and Statistics
+
+# Lab Assignment 1: Naive Bayes Classifier
+
+## Work breakdown
+
+-   *Nazar Mykhailyshchuk*:
+-   *Nikita Lenyk*:
+-   *Anastasiya Shopska*:
+## Package Installation
+
+```{r eval=FALSE}
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "Matrix"))
+```
+
+## Setup
+```{r}
+library(readr)
+library(stringi)
+library(tokenizers)
+library(SnowballC)
+library(textstem)
+library(Matrix)
+```
+
+## Helper functions for text preprocessing
+
+```{r}
+# Remove stopwords from a vector of tokens (preserving order and duplicates)
+remove_stopwords_from_tokens <- function(tokens, stopwords_list) {
+  tokens[!tokens %in% stopwords_list]
+}
+
+# Apply stemming to tokens if they exist
+apply_stemming_to_tokens <- function(tokens) {
+  if (length(tokens) > 0) {
+    SnowballC::wordStem(tokens, language = "english")
+  } else {
+    tokens
+  }
+}
+
+# Apply lemmatization to tokens if they exist
+apply_lemmatization_to_tokens <- function(tokens) {
+  if (length(tokens) > 0) {
+    textstem::lemmatize_words(tokens)
+  } else {
+    tokens
+  }
+}
+
+# Generate n-grams from tokens
+generate_ngrams_from_tokens <- function(tokens, n) {
+  if (length(tokens) >= n) {
+    sapply(seq_len(length(tokens) - n + 1), function(i) {
+      paste(tokens[i:(i + n - 1)], collapse = "_")
+    })
+  } else {
+    character(0)
+  }
+}
+
+```
+
+## Text Preprocessing Pipeline
+```{r}
+#' Build Text Preprocessing Pipeline for SMS Spam Classification
+#'
+#' @param texts Character vector of text messages to preprocess
+#' @param do_stem Apply stemming (default: FALSE)
+#' @param do_lemma Apply lemmatization (default: FALSE)
+#' @param remove_stopwords Remove stop words (default: TRUE)
+#' @param stopwords_list Custom stop words list (default: NULL)
+#' @param ngram N-gram size: 1=unigrams, 2=bigrams, etc. (default: 1)
+#' @param tokenize_special Tokenize emails/phones/URLs as special tokens (default: TRUE)
+#' @param vocabulary Pre-defined vocabulary (for test data). If NULL, builds vocabulary from texts (for train data)
+#'
+#' @return List with dtm (sparse matrix), vocabulary, and preprocessing_info
+build_preprocessing_pipeline <- function(texts,
+                                         do_stem = FALSE,
+                                         do_lemma = FALSE,
+                                         remove_stopwords = TRUE,
+                                         stopwords_list = NULL,
+                                         ngram = 1,
+                                         tokenize_special = TRUE,
+                                         vocabulary = NULL) {
+  if (!is.character(texts) || length(texts) == 0) {
+    stop("texts must be a non-empty character vector")
+  }
+
+  if (!is.numeric(ngram) || length(ngram) != 1 || ngram < 1 || ngram != as.integer(ngram)) {
+    stop("ngram must be a single positive integer")
+  }
+
+  if (do_stem && do_lemma) {
+    warning("Both stemming and lemmatization enabled. Using lemmatization only (recommended).")
+    do_stem <- FALSE
+  }
+
+  preprocessing_info <- list(
+    do_stem = do_stem,
+    do_lemma = do_lemma,
+    remove_stopwords = remove_stopwords,
+    custom_stopwords = !is.null(stopwords_list),
+    ngram = ngram,
+    tokenize_special = tokenize_special,
+    original_length = length(texts)
+  )
+
+  # Step 1: Text cleaning and normalization
+  clean_texts <- stringi::stri_trans_tolower(texts)
+
+  if (tokenize_special) {
+    # Replace special patterns with tokens
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\b[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}\\b", " EMAIL ")
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\bhttps?://\\S+\\b", " URL ")
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\b\\d{3}[-.]?\\d{3}[-.]?\\d{4}\\b", " PHONE ")
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\$\\d+(?:\\.\\d{2})?", " MONEY ")
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\b\\d{5,}\\b", " LONGNUM ")
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "[^a-z\\s]", " ")
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\s+", " ")
+    clean_texts <- stringi::stri_trim_both(clean_texts)
+  } else {
+    # Standard cleaning
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "[^a-z\\s]", " ")
+    clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\s+", " ")
+    clean_texts <- stringi::stri_trim_both(clean_texts)
+  }
+  non_empty_idx <- nchar(clean_texts) > 0
+  clean_texts <- clean_texts[non_empty_idx]
+
+  # Step 2: Tokenization
+  tokens_list <- tokenizers::tokenize_words(clean_texts, lowercase = FALSE, strip_punct = FALSE)
+
+  # Step 3: Stop words removal
+  if (remove_stopwords) {
+    if (is.null(stopwords_list)) {
+      stopwords_list <- readLines("data/stop_words.txt", warn = FALSE)
+    }
+
+    tokens_list <- lapply(tokens_list, remove_stopwords_from_tokens, stopwords_list)
+  }
+
+  # Step 4: Stemming
+  if (do_stem) {
+    if (!requireNamespace("SnowballC", quietly = TRUE)) {
+      warning("SnowballC package not available. Skipping stemming.")
+    } else {
+      tokens_list <- lapply(tokens_list, apply_stemming_to_tokens)
+    }
+  }
+
+  # Step 5: Lemmatization
+  if (do_lemma) {
+    if (!requireNamespace("textstem", quietly = TRUE)) {
+      warning("textstem package not available. Skipping lemmatization.")
+    } else {
+      tokens_list <- lapply(tokens_list, apply_lemmatization_to_tokens)
+    }
+  }
+  # Step 6: N-gram generation
+  if (ngram == 1) {
+    ngram_tokens <- tokens_list
+  } else {
+    ngram_tokens <- lapply(tokens_list, generate_ngrams_from_tokens, ngram)
+  }
+
+  # Step 7: Build vocabulary and create DTM
+  # Count term frequencies across all documents
+  all_terms <- unlist(ngram_tokens)
+
+  # Use provided vocabulary (for test data) or build from current texts (for train data)
+  if (is.null(vocabulary)) {
+    term_freq <- table(all_terms)
+    vocabulary <- sort(names(term_freq))
+  }
+
+
+  # Create Document-Term Matrix using Matrix package
+  doc_indices_list <- list()
+  term_indices_list <- list()
+  counts_list <- list()
+
+  term_to_idx <- setNames(seq_along(vocabulary), vocabulary)
+
+  for (doc_idx in seq_along(ngram_tokens)) {
+    doc_terms <- ngram_tokens[[doc_idx]]
+
+    # Keep only terms that are in vocabulary (ignore out-of-vocabulary words for test data)
+    doc_terms_in_vocab <- doc_terms[doc_terms %in% vocabulary]
+
+    if (length(doc_terms_in_vocab) > 0) {
+      doc_term_counts <- table(doc_terms_in_vocab)
+      doc_indices_list[[doc_idx]] <- rep(doc_idx, length(doc_term_counts))
+      term_indices_list[[doc_idx]] <- term_to_idx[names(doc_term_counts)]
+      counts_list[[doc_idx]] <- as.integer(doc_term_counts)
+    }
+  }
+
+  # Combine all indices
+  doc_indices <- unlist(doc_indices_list)
+  term_indices <- unlist(term_indices_list)
+  counts <- unlist(counts_list)
+
+  # Create sparse matrix
+  dtm <- Matrix::sparseMatrix(
+    i = doc_indices,
+    j = term_indices,
+    x = counts,
+    dims = c(length(ngram_tokens), length(vocabulary)),
+    dimnames = list(
+      docs = paste0("doc", seq_along(ngram_tokens)),
+      terms = vocabulary
+    )
+  )
+
+  # Update preprocessing info with final statistics
+  preprocessing_info$final_vocab_size <- length(vocabulary)
+  preprocessing_info$final_doc_count <- nrow(dtm)
+  preprocessing_info$dtm_sparsity <- 1 - (length(dtm@x) / (nrow(dtm) * ncol(dtm)))
+
+  return(list(
+    dtm = dtm,
+    vocabulary = vocabulary,
+    preprocessing_info = preprocessing_info
+  ))
+}
+```
+
+## Example Usage
+
+```{r}
+library(readr)
+library(dplyr)
+train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
+
+train_preprocessed <- build_preprocessing_pipeline(
+  texts = train_data$Message,
+  do_stem = FALSE,
+  do_lemma = TRUE,
+  remove_stopwords = TRUE,
+  stopwords_list = NULL,
+  ngram = 1,
+  tokenize_special = TRUE,
+  vocabulary = NULL
+)
+
+dtm <- train_preprocessed$dtm
+rownames(dtm) <- paste0("train_", seq_len(nrow(dtm)))
+
+
+term_freq <- colSums(as.matrix(dtm))
+term_freq_sorted <- sort(term_freq, decreasing = TRUE)
+
+top_terms_table <- tibble(
+  term = names(term_freq_sorted),
+  freq = as.integer(term_freq_sorted)
+) %>% slice(1:10)
+
+
+
+top_terms <- top_terms_table$term
+dtm_top <- dtm[, top_terms]
+
+as.matrix(dtm_top[1:5, ])
+```
+
+```{r}
+top_terms_table
+```
