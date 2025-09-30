@@ -21,7 +21,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r eval=FALSE}
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
-install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "dplyr"))
+install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem"))
 ```
 
 ## Setup
@@ -31,7 +31,6 @@ library(textstem)
 library(stringi)
 library(tokenizers)
 library(SnowballC)
-library(dplyr)
 ```
 
 ## Helper functions for text preprocessing
@@ -228,8 +227,6 @@ build_preprocessing_pipeline <- function(texts,
 ## Example Usage
 
 ```{r}
-library(readr)
-library(dplyr)
 train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
 
 train_preprocessed <- build_preprocessing_pipeline(
@@ -250,10 +247,10 @@ rownames(dtm) <- paste0("train_", seq_len(nrow(dtm)))
 term_freq <- colSums(dtm)
 term_freq_sorted <- sort(term_freq, decreasing = TRUE)
 
-top_terms_table <- tibble(
+top_terms_table <- data.frame(
   term = names(term_freq_sorted),
   freq = as.integer(term_freq_sorted)
-) %>% slice(1:10)
+)[1:10, ]
 
 
 

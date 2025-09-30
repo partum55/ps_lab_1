@@ -365,7 +365,7 @@ display: none;
 <li><em>Anastasiya Shopska</em>: ## Package Installation</li>
 </ul>
 <pre class="r"><code>options(repos = c(CRAN = &quot;https://cran.rstudio.com/&quot;))
-install.packages(c(&quot;readr&quot;, &quot;stringi&quot;, &quot;tokenizers&quot;, &quot;SnowballC&quot;, &quot;textstem&quot;, &quot;dplyr&quot;))</code></pre>
+install.packages(c(&quot;readr&quot;, &quot;stringi&quot;, &quot;tokenizers&quot;, &quot;SnowballC&quot;, &quot;textstem&quot;))</code></pre>
 </div>
 <div id="setup" class="section level2">
 <h2>Setup</h2>
@@ -386,16 +386,7 @@ library(textstem)</code></pre>
 ##     tokenize</code></pre>
 <pre class="r"><code>library(stringi)
 library(tokenizers)
-library(SnowballC)
-library(dplyr)</code></pre>
-<pre><code>## 
-## Attaching package: &#39;dplyr&#39;</code></pre>
-<pre><code>## The following objects are masked from &#39;package:stats&#39;:
-## 
-##     filter, lag</code></pre>
-<pre><code>## The following objects are masked from &#39;package:base&#39;:
-## 
-##     intersect, setdiff, setequal, union</code></pre>
+library(SnowballC)</code></pre>
 </div>
 <div id="helper-functions-for-text-preprocessing" class="section level2">
 <h2>Helper functions for text preprocessing</h2>
@@ -587,9 +578,7 @@ build_preprocessing_pipeline &lt;- function(texts,
 </div>
 <div id="example-usage" class="section level2">
 <h2>Example Usage</h2>
-<pre class="r"><code>library(readr)
-library(dplyr)
-train_data &lt;- read_csv(&quot;data/4-spam/train.csv&quot;, show_col_types = FALSE)
+<pre class="r"><code>train_data &lt;- read_csv(&quot;data/4-spam/train.csv&quot;, show_col_types = FALSE)
 
 train_preprocessed &lt;- build_preprocessing_pipeline(
   texts = train_data$Message,
@@ -609,10 +598,10 @@ rownames(dtm) &lt;- paste0(&quot;train_&quot;, seq_len(nrow(dtm)))
 term_freq &lt;- colSums(dtm)
 term_freq_sorted &lt;- sort(term_freq, decreasing = TRUE)
 
-top_terms_table &lt;- tibble(
+top_terms_table &lt;- data.frame(
   term = names(term_freq_sorted),
   freq = as.integer(term_freq_sorted)
-) %&gt;% slice(1:10)
+)[1:10, ]
 
 
 
@@ -628,19 +617,17 @@ dtm_top[1:5, ]</code></pre>
 ##   train_4 2    0   0    0 0  0   0 0    0   0
 ##   train_5 0    0   0    0 0  1   0 1    0   0</code></pre>
 <pre class="r"><code>top_terms_table</code></pre>
-<pre><code>## # A tibble: 10 × 2
-##    term   freq
-##    &lt;chr&gt; &lt;int&gt;
-##  1 u       936
-##  2 call    543
-##  3 get     543
-##  4 will    525
-##  5 s       464
-##  6 go      445
-##  7 now     406
-##  8 t       395
-##  9 good    367
-## 10 can     359</code></pre>
+<pre><code>##    term freq
+## 1     u  936
+## 2  call  543
+## 3   get  543
+## 4  will  525
+## 5     s  464
+## 6    go  445
+## 7   now  406
+## 8     t  395
+## 9  good  367
+## 10  can  359</code></pre>
 </div>
 <div id="classifier-implementation" class="section level2">
 <h2>Classifier implementation</h2>
