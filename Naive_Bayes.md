@@ -27,7 +27,6 @@ install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "M
 ## Setup
 ```{r}
 library(readr)
-library(textstem)
 library(stringi)
 library(tokenizers)
 library(SnowballC)
@@ -279,13 +278,4 @@ as.matrix(dtm_top[1:5, ])
 
 ```{r}
 top_terms_table
-```
-
-
-## Classifier implementation
-```{r mult_nb_with_pipeline, message=FALSE, warning=FALSE}
-library(readr)
-library(Matrix)
-
-
 ```

@@ -1,0 +1,150 @@
+# Naive Bayes Classifier
+```{r mult_nb_with_pipeline, message=FALSE, warning=FALSE}
+# Завантажуємо бібліотеки
+library(readr)
+library(Matrix)
+
+# 1) Зчитуємо CSV (якщо ще не зчитано)
+train_path <- "data/4-spam/train.csv"
+test_path  <- "data/4-spam/test.csv"
+
+if (!exists("train_data") || !exists("test_data")) {
+  train_data <- readr::read_csv(train_path, show_col_types = FALSE)
+  test_data  <- readr::read_csv(test_path,  show_col_types = FALSE)
+  # узгодимо ім'я класу
+  if ("Category" %in% colnames(train_data)) {
+    train_data$Class <- train_data$Category
+    test_data$Class  <- test_data$Category
+  } else if ("Label" %in% colnames(train_data)) {
+    train_data$Class <- train_data$Label
+    test_data$Class  <- test_data$Label
+  }
+}
+
+# 2) Побудова DTM через build_preprocessing_pipeline (або fallback)
+cache_train <- "data/cache_train_dtm.rds"
+cache_test  <- "data/cache_test_dtm.rds"
+
+if (file.exists(cache_train) && file.exists(cache_test)) {
+  train_dtm <- readRDS(cache_train)
+  test_dtm  <- readRDS(cache_test)
+  message("Loaded train_dtm/test_dtm from cache.")
+} else {
+  if (exists("build_preprocessing_pipeline") && is.function(build_preprocessing_pipeline)) {
+    message("Using build_preprocessing_pipeline to build DTM...")
+    tr_res <- build_preprocessing_pipeline(
+      texts = train_data$Message,
+      vocabulary = NULL,
+      do_stem = FALSE, do_lemma = TRUE,
+      remove_stopwords = TRUE,
+      ngram = 2, tokenize_special = TRUE
+    )
+    train_dtm <- tr_res$dtm
+    vocab <- tr_res$vocabulary
+
+    ts_res <- build_preprocessing_pipeline(
+      texts = test_data$Message,
+      vocabulary = vocab,
+      do_stem = FALSE, do_lemma = TRUE,
+      remove_stopwords = TRUE,
+      ngram = 1, tokenize_special = TRUE
+    )
+    test_dtm <- ts_res$dtm
+
+    dir.create(dirname(cache_train), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(train_dtm, cache_train)
+    saveRDS(test_dtm, cache_test)
+    message("Saved DTM to cache.")
+  } else {
+    # fallback через tidytext
+    message("Pipeline not found — using tidytext fallback to build DTM.")
+    library(tidytext); library(dplyr); library(tidyr)
+    stop_words_vec <- readLines("data/stop_words.txt", warn = FALSE)
+
+    train_tokens <- train_data %>%
+      mutate(doc_id = row_number()) %>%
+      unnest_tokens(word, Message) %>%
+      filter(!word %in% stop_words_vec)
+
+    test_tokens <- test_data %>%
+      mutate(doc_id = row_number()) %>%
+      unnest_tokens(word, Message) %>%
+      filter(!word %in% stop_words_vec)
+
+    train_dtm <- cast_sparse(train_tokens, doc_id, word, n)
+    test_dtm  <- cast_sparse(test_tokens,  doc_id, word, n)
+
+    # вирівняти колонки тесту під словник train
+    vocab <- colnames(train_dtm)
+    miss <- setdiff(vocab, colnames(test_dtm))
+    if (length(miss) > 0) {
+      pad <- Matrix::Matrix(0, nrow = nrow(test_dtm), ncol = length(miss), sparse = TRUE)
+      colnames(pad) <- miss
+      test_dtm <- cbind(test_dtm, pad)
+    }
+    test_dtm <- test_dtm[, vocab, drop = FALSE]
+
+    saveRDS(train_dtm, cache_train)
+    saveRDS(test_dtm, cache_test)
+    message("Built fallback DTM and cached.")
+  }
+}
+
+# 3) Перевірки
+stopifnot(!is.null(colnames(train_dtm)))
+if (!identical(colnames(test_dtm), colnames(train_dtm))) {
+  # вирівняємо порядок і додамо відсутні колонки
+  vocab <- colnames(train_dtm)
+  missing_in_test <- setdiff(vocab, colnames(test_dtm))
+  if (length(missing_in_test) > 0) {
+    pad <- Matrix::Matrix(0, nrow = nrow(test_dtm), ncol = length(missing_in_test), sparse = TRUE)
+    colnames(pad) <- missing_in_test
+    test_dtm <- cbind(test_dtm, pad)
+  }
+  test_dtm <- test_dtm[, vocab, drop = FALSE]
+}
+
+# 4) Навчання простого Multinomial Naive Bayes (в лог-просторі)
+laplace <- 1
+classes <- sort(unique(as.character(train_data$Class)))
+V <- ncol(train_dtm)
+
+loglik_mat <- matrix(NA_real_, nrow = length(classes), ncol = V,
+                     dimnames = list(classes, colnames(train_dtm)))
+priors_log <- log(as.numeric(table(train_data$Class)[classes]) / nrow(train_data))
+
+for (i in seq_along(classes)) {
+  cls <- classes[i]
+  idx <- which(train_data$Class == cls)
+  class_counts <- Matrix::colSums(train_dtm[idx, , drop = FALSE])
+  total_terms <- sum(class_counts)
+  smoothed <- class_counts + laplace
+  denom <- total_terms + laplace * V
+  loglik_mat[i, ] <- log(smoothed) - log(denom)
+}
+
+# 5) Прогноз
+scores <- as.matrix(test_dtm %*% t(loglik_mat))   # n_test x C
+scores <- sweep(scores, 2, priors_log, FUN = "+")
+pred_idx <- max.col(scores, ties.method = "first")
+preds <- classes[pred_idx]
+
+# 6) Precision (для кожного класу)
+cm <- table(Predicted = preds, Actual = as.character(test_data$Class))
+print(cm)
+
+precision <- sapply(classes, function(cls) {
+  TP <- if (!is.na(cm[cls, cls])) cm[cls, cls] else 0
+  FP <- if (cls %in% rownames(cm)) sum(cm[cls, ]) - TP else 0
+  if ((TP + FP) == 0) return(NA_real_)
+  TP / (TP + FP)
+})
+names(precision) <- classes
+
+cat("\nPrecision by class:\n")
+print(round(precision, 4))
+
+# Опціонально: показати accuracy
+acc <- mean(preds == as.character(test_data$Class))
+cat("\nAccuracy:", round(acc, 4), "\n")
+```
