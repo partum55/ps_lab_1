@@ -423,7 +423,7 @@ apply_lemmatization_to_tokens &lt;- function(tokens) {
   }
 }
 
-# Generate n-grams from tokens
+# Generate word n-grams from tokens
 generate_ngrams_from_tokens &lt;- function(tokens, n) {
   if (length(tokens) &gt;= n) {
     sapply(seq_len(length(tokens) - n + 1), function(i) {
@@ -669,9 +669,6 @@ as.matrix(dtm_top[1:5, ])</code></pre>
 <div id="classifier-implementation" class="section level2">
 <h2>Classifier implementation</h2>
 <pre class="r"><code>naiveBayes &lt;- setRefClass(&quot;naiveBayes&quot;,
-
-  # here it would be wise to have some vars to store intermediate result
-  # frequency dict etc. Though pay attention to bag of words!
   fields = list(
     model = &quot;list&quot;,
     vocabulary = &quot;character&quot;,
@@ -680,9 +677,7 @@ as.matrix(dtm_top[1:5, ])</code></pre>
   methods = list(
     # prepare your training data as X - bag of words for each of your
     # messages and corresponding label for the message encoded as 0 or 1
-    # (binary classification task)
     fit = function(X, y, laplace = 1, do_stem = FALSE, do_lemma = TRUE, remove_stopwords = TRUE, ngram = 1, tokenize_special = TRUE) {
-      # Build preprocessing pipeline for training data
       train_preprocessed &lt;- build_preprocessing_pipeline(
         texts = X,
         do_stem = do_stem,
@@ -736,14 +731,10 @@ as.matrix(dtm_top[1:5, ])</code></pre>
         vocabulary = colnames(dtm)
       )
     },
-
-    # return prediction for a single message
     predict = function(message) {
       if (is.null(model) || length(model) == 0) {
         stop(&quot;Model not trained. Please call fit() first.&quot;)
       }
-
-      # Preprocess the single message using same parameters as training
       test_preprocessed &lt;- build_preprocessing_pipeline(
         texts = message,
         do_stem = preprocessing_params$do_stem,
@@ -757,7 +748,6 @@ as.matrix(dtm_top[1:5, ])</code></pre>
 
       dtm_new &lt;- test_preprocessed$dtm
 
-      # Align DTM with training vocabulary
       vocab &lt;- model$vocabulary
       dtm_aligned &lt;- Matrix::Matrix(0,
         nrow = nrow(dtm_new), ncol = length(vocab),
@@ -779,14 +769,8 @@ as.matrix(dtm_top[1:5, ])</code></pre>
       predictions &lt;- model$classes[best_class_idx]
       return(predictions)
     },
-
-    # score you test set so to get the understanding how well you model
-    # works.
-    # look at f1 score or precision and recall
-    # visualize them
-    # try how well your model generalizes to real world data!
     score = function(X_test, y_test) {
-      # TODO - to be implemented by another person
+      # TODO
     }
   )
 )
@@ -795,20 +779,15 @@ model &lt;- naiveBayes()</code></pre>
 </div>
 <div id="example-usage-1" class="section level2">
 <h2>Example Usage</h2>
-<pre class="r"><code># Load training data
-train_data &lt;- read_csv(&quot;data/4-spam/train.csv&quot;, show_col_types = FALSE)
-
-# Create and fit the model
+<pre class="r"><code>train_data &lt;- read_csv(&quot;data/4-spam/train.csv&quot;, show_col_types = FALSE)
 model &lt;- naiveBayes()
 model$fit(X = train_data$Message, y = train_data$Category)
 
-# Test single prediction
 test_message &lt;- &quot;Free money! Call now!&quot;
 prediction &lt;- model$predict(test_message)
 print(paste(&quot;Prediction:&quot;, prediction))</code></pre>
 <pre><code>## [1] &quot;Prediction: spam&quot;</code></pre>
-<pre class="r"><code># Load test data for batch predictions
-test_data &lt;- read_csv(&quot;data/4-spam/test.csv&quot;, show_col_types = FALSE)
+<pre class="r"><code>test_data &lt;- read_csv(&quot;data/4-spam/test.csv&quot;, show_col_types = FALSE)
 test_predictions &lt;- sapply(test_data$Message, function(msg) model$predict(msg))
 print(paste(&quot;First 5 predictions:&quot;, paste(test_predictions[1:5], collapse = &quot;, &quot;)))</code></pre>
 <pre><code>## [1] &quot;First 5 predictions: ham, ham, ham, ham, ham&quot;</code></pre>
