@@ -365,7 +365,7 @@ display: none;
 <li><em>Anastasiya Shopska</em>: ## Package Installation</li>
 </ul>
 <pre class="r"><code>options(repos = c(CRAN = &quot;https://cran.rstudio.com/&quot;))
-install.packages(c(&quot;readr&quot;, &quot;stringi&quot;, &quot;tokenizers&quot;, &quot;SnowballC&quot;, &quot;textstem&quot;, &quot;Matrix&quot;, &quot;e1071&quot;))</code></pre>
+install.packages(c(&quot;readr&quot;, &quot;stringi&quot;, &quot;tokenizers&quot;, &quot;SnowballC&quot;, &quot;textstem&quot;, &quot;dplyr&quot;))</code></pre>
 </div>
 <div id="setup" class="section level2">
 <h2>Setup</h2>
@@ -387,7 +387,6 @@ library(textstem)</code></pre>
 <pre class="r"><code>library(stringi)
 library(tokenizers)
 library(SnowballC)
-library(Matrix)
 library(dplyr)</code></pre>
 <pre><code>## 
 ## Attaching package: &#39;dplyr&#39;</code></pre>
@@ -447,7 +446,7 @@ generate_ngrams_from_tokens &lt;- function(tokens, n) {
 #&#39; @param tokenize_special Tokenize emails/phones/URLs as special tokens (default: TRUE)
 #&#39; @param vocabulary Pre-defined vocabulary (for test data). If NULL, builds vocabulary from texts (for train data)
 #&#39;
-#&#39; @return List with dtm (sparse matrix), vocabulary, and preprocessing_info
+#&#39; @return List with dtm (matrix), vocabulary, and preprocessing_info
 build_preprocessing_pipeline &lt;- function(texts,
                                          do_stem = FALSE,
                                          do_lemma = FALSE,
@@ -545,62 +544,39 @@ build_preprocessing_pipeline &lt;- function(texts,
     vocabulary &lt;- sort(names(term_freq))
   }
 
+  # Create Document-Term Matrix using base R
+  # Initialize empty matrix
+  dtm &lt;- matrix(0,
+    nrow = length(ngram_tokens),
+    ncol = length(vocabulary),
+    dimnames = list(
+      docs = paste0(&quot;doc&quot;, seq_along(ngram_tokens)),
+      terms = vocabulary
+    )
+  )
 
-  # Create Document-Term Matrix using Matrix package
-  doc_indices_list &lt;- list()
-  term_indices_list &lt;- list()
-  counts_list &lt;- list()
-
-  term_to_idx &lt;- setNames(seq_along(vocabulary), vocabulary)
-
+  # Fill the matrix
   for (doc_idx in seq_along(ngram_tokens)) {
     doc_terms &lt;- ngram_tokens[[doc_idx]]
 
-    # Keep only terms that are in vocabulary (ignore out-of-vocabulary words for test data)
+    # Keep only terms that are in vocabulary
     doc_terms_in_vocab &lt;- doc_terms[doc_terms %in% vocabulary]
 
     if (length(doc_terms_in_vocab) &gt; 0) {
+      # Count term frequencies for this document
       doc_term_counts &lt;- table(doc_terms_in_vocab)
-      doc_indices_list[[doc_idx]] &lt;- rep(doc_idx, length(doc_term_counts))
-      term_indices_list[[doc_idx]] &lt;- term_to_idx[names(doc_term_counts)]
-      counts_list[[doc_idx]] &lt;- as.integer(doc_term_counts)
+
+      # Update the matrix for this document
+      for (term in names(doc_term_counts)) {
+        dtm[doc_idx, term] &lt;- doc_term_counts[[term]]
+      }
     }
-  }
-
-  # Combine all indices
-  doc_indices &lt;- unlist(doc_indices_list)
-  term_indices &lt;- unlist(term_indices_list)
-  counts &lt;- unlist(counts_list)
-
-  # Create sparse matrix - handle empty case
-  if (length(doc_indices) == 0) {
-    # Create empty matrix if no terms found
-    dtm &lt;- Matrix::Matrix(0,
-      nrow = length(ngram_tokens),
-      ncol = length(vocabulary),
-      sparse = TRUE,
-      dimnames = list(
-        docs = paste0(&quot;doc&quot;, seq_along(ngram_tokens)),
-        terms = vocabulary
-      )
-    )
-  } else {
-    dtm &lt;- Matrix::sparseMatrix(
-      i = doc_indices,
-      j = term_indices,
-      x = counts,
-      dims = c(length(ngram_tokens), length(vocabulary)),
-      dimnames = list(
-        docs = paste0(&quot;doc&quot;, seq_along(ngram_tokens)),
-        terms = vocabulary
-      )
-    )
   }
 
   # Update preprocessing info with final statistics
   preprocessing_info$final_vocab_size &lt;- length(vocabulary)
   preprocessing_info$final_doc_count &lt;- nrow(dtm)
-  preprocessing_info$dtm_sparsity &lt;- 1 - (length(dtm@x) / (nrow(dtm) * ncol(dtm)))
+  preprocessing_info$dtm_sparsity &lt;- 1 - (sum(dtm != 0) / (nrow(dtm) * ncol(dtm)))
 
   return(list(
     dtm = dtm,
@@ -630,7 +606,7 @@ dtm &lt;- train_preprocessed$dtm
 rownames(dtm) &lt;- paste0(&quot;train_&quot;, seq_len(nrow(dtm)))
 
 
-term_freq &lt;- colSums(as.matrix(dtm))
+term_freq &lt;- colSums(dtm)
 term_freq_sorted &lt;- sort(term_freq, decreasing = TRUE)
 
 top_terms_table &lt;- tibble(
@@ -643,7 +619,7 @@ top_terms_table &lt;- tibble(
 top_terms &lt;- top_terms_table$term
 dtm_top &lt;- dtm[, top_terms]
 
-as.matrix(dtm_top[1:5, ])</code></pre>
+dtm_top[1:5, ]</code></pre>
 <pre><code>##          terms
 ## docs      u call get will s go now t good can
 ##   train_1 0    0   1    0 0  1   0 0    0   0
@@ -749,9 +725,8 @@ as.matrix(dtm_top[1:5, ])</code></pre>
       dtm_new &lt;- test_preprocessed$dtm
 
       vocab &lt;- model$vocabulary
-      dtm_aligned &lt;- Matrix::Matrix(0,
+      dtm_aligned &lt;- matrix(0,
         nrow = nrow(dtm_new), ncol = length(vocab),
-        sparse = TRUE,
         dimnames = list(rownames(dtm_new), vocab)
       )
       common_cols &lt;- intersect(colnames(dtm_new), vocab)
@@ -761,7 +736,7 @@ as.matrix(dtm_top[1:5, ])</code></pre>
 
       # Calculate scores
       # dtm_aligned: n_docs x n_vocab, log_likelihoods: n_vocab x n_classes
-      scores_mat &lt;- as.matrix(dtm_aligned %*% model$log_likelihoods)
+      scores_mat &lt;- dtm_aligned %*% model$log_likelihoods
       scores_mat &lt;- sweep(scores_mat, 2, model$log_priors, &quot;+&quot;)
 
       # Get winning class
@@ -783,7 +758,7 @@ model &lt;- naiveBayes()</code></pre>
 model &lt;- naiveBayes()
 model$fit(X = train_data$Message, y = train_data$Category)
 
-test_message &lt;- &quot;Free money! Call now!&quot;
+test_message &lt;- &quot;Free money!!! Click here to claim your prize.&quot;
 prediction &lt;- model$predict(test_message)
 print(paste(&quot;Prediction:&quot;, prediction))</code></pre>
 <pre><code>## [1] &quot;Prediction: spam&quot;</code></pre>

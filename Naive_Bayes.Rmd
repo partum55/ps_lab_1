@@ -21,7 +21,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r eval=FALSE}
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
-install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "Matrix", "e1071"))
+install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "dplyr"))
 ```
 
 ## Setup
@@ -31,7 +31,6 @@ library(textstem)
 library(stringi)
 library(tokenizers)
 library(SnowballC)
-library(Matrix)
 library(dplyr)
 ```
 
@@ -86,7 +85,7 @@ generate_ngrams_from_tokens <- function(tokens, n) {
 #' @param tokenize_special Tokenize emails/phones/URLs as special tokens (default: TRUE)
 #' @param vocabulary Pre-defined vocabulary (for test data). If NULL, builds vocabulary from texts (for train data)
 #'
-#' @return List with dtm (sparse matrix), vocabulary, and preprocessing_info
+#' @return List with dtm (matrix), vocabulary, and preprocessing_info
 build_preprocessing_pipeline <- function(texts,
                                          do_stem = FALSE,
                                          do_lemma = FALSE,
@@ -184,62 +183,39 @@ build_preprocessing_pipeline <- function(texts,
     vocabulary <- sort(names(term_freq))
   }
 
+  # Create Document-Term Matrix using base R
+  # Initialize empty matrix
+  dtm <- matrix(0,
+    nrow = length(ngram_tokens),
+    ncol = length(vocabulary),
+    dimnames = list(
+      docs = paste0("doc", seq_along(ngram_tokens)),
+      terms = vocabulary
+    )
+  )
 
-  # Create Document-Term Matrix using Matrix package
-  doc_indices_list <- list()
-  term_indices_list <- list()
-  counts_list <- list()
-
-  term_to_idx <- setNames(seq_along(vocabulary), vocabulary)
-
+  # Fill the matrix
   for (doc_idx in seq_along(ngram_tokens)) {
     doc_terms <- ngram_tokens[[doc_idx]]
 
-    # Keep only terms that are in vocabulary (ignore out-of-vocabulary words for test data)
+    # Keep only terms that are in vocabulary
     doc_terms_in_vocab <- doc_terms[doc_terms %in% vocabulary]
 
     if (length(doc_terms_in_vocab) > 0) {
+      # Count term frequencies for this document
       doc_term_counts <- table(doc_terms_in_vocab)
-      doc_indices_list[[doc_idx]] <- rep(doc_idx, length(doc_term_counts))
-      term_indices_list[[doc_idx]] <- term_to_idx[names(doc_term_counts)]
-      counts_list[[doc_idx]] <- as.integer(doc_term_counts)
+
+      # Update the matrix for this document
+      for (term in names(doc_term_counts)) {
+        dtm[doc_idx, term] <- doc_term_counts[[term]]
+      }
     }
-  }
-
-  # Combine all indices
-  doc_indices <- unlist(doc_indices_list)
-  term_indices <- unlist(term_indices_list)
-  counts <- unlist(counts_list)
-
-  # Create sparse matrix - handle empty case
-  if (length(doc_indices) == 0) {
-    # Create empty matrix if no terms found
-    dtm <- Matrix::Matrix(0,
-      nrow = length(ngram_tokens),
-      ncol = length(vocabulary),
-      sparse = TRUE,
-      dimnames = list(
-        docs = paste0("doc", seq_along(ngram_tokens)),
-        terms = vocabulary
-      )
-    )
-  } else {
-    dtm <- Matrix::sparseMatrix(
-      i = doc_indices,
-      j = term_indices,
-      x = counts,
-      dims = c(length(ngram_tokens), length(vocabulary)),
-      dimnames = list(
-        docs = paste0("doc", seq_along(ngram_tokens)),
-        terms = vocabulary
-      )
-    )
   }
 
   # Update preprocessing info with final statistics
   preprocessing_info$final_vocab_size <- length(vocabulary)
   preprocessing_info$final_doc_count <- nrow(dtm)
-  preprocessing_info$dtm_sparsity <- 1 - (length(dtm@x) / (nrow(dtm) * ncol(dtm)))
+  preprocessing_info$dtm_sparsity <- 1 - (sum(dtm != 0) / (nrow(dtm) * ncol(dtm)))
 
   return(list(
     dtm = dtm,
@@ -271,7 +247,7 @@ dtm <- train_preprocessed$dtm
 rownames(dtm) <- paste0("train_", seq_len(nrow(dtm)))
 
 
-term_freq <- colSums(as.matrix(dtm))
+term_freq <- colSums(dtm)
 term_freq_sorted <- sort(term_freq, decreasing = TRUE)
 
 top_terms_table <- tibble(
@@ -284,7 +260,7 @@ top_terms_table <- tibble(
 top_terms <- top_terms_table$term
 dtm_top <- dtm[, top_terms]
 
-as.matrix(dtm_top[1:5, ])
+dtm_top[1:5, ]
 ```
 ```{r}
 top_terms_table
@@ -375,9 +351,8 @@ naiveBayes <- setRefClass("naiveBayes",
       dtm_new <- test_preprocessed$dtm
 
       vocab <- model$vocabulary
-      dtm_aligned <- Matrix::Matrix(0,
+      dtm_aligned <- matrix(0,
         nrow = nrow(dtm_new), ncol = length(vocab),
-        sparse = TRUE,
         dimnames = list(rownames(dtm_new), vocab)
       )
       common_cols <- intersect(colnames(dtm_new), vocab)
@@ -387,7 +362,7 @@ naiveBayes <- setRefClass("naiveBayes",
 
       # Calculate scores
       # dtm_aligned: n_docs x n_vocab, log_likelihoods: n_vocab x n_classes
-      scores_mat <- as.matrix(dtm_aligned %*% model$log_likelihoods)
+      scores_mat <- dtm_aligned %*% model$log_likelihoods
       scores_mat <- sweep(scores_mat, 2, model$log_priors, "+")
 
       # Get winning class
@@ -411,7 +386,7 @@ train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
 model <- naiveBayes()
 model$fit(X = train_data$Message, y = train_data$Category)
 
-test_message <- "Free money! Call now!"
+test_message <- "Free money!!! Click here to claim your prize."
 prediction <- model$predict(test_message)
 print(paste("Prediction:", prediction))
 
