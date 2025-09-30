@@ -21,7 +21,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r eval=FALSE}
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
-install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "Matrix"))
+install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "Matrix", "e1071"))
 ```
 
 ## Setup
@@ -71,7 +71,6 @@ generate_ngrams_from_tokens <- function(tokens, n) {
     character(0)
   }
 }
-
 ```
 
 ## Text Preprocessing Pipeline
@@ -138,8 +137,6 @@ build_preprocessing_pipeline <- function(texts,
     clean_texts <- stringi::stri_replace_all_regex(clean_texts, "\\s+", " ")
     clean_texts <- stringi::stri_trim_both(clean_texts)
   }
-  non_empty_idx <- nchar(clean_texts) > 0
-  clean_texts <- clean_texts[non_empty_idx]
 
   # Step 2: Tokenization
   tokens_list <- tokenizers::tokenize_words(clean_texts, lowercase = FALSE, strip_punct = FALSE)
@@ -252,7 +249,7 @@ train_preprocessed <- build_preprocessing_pipeline(
   do_lemma = TRUE,
   remove_stopwords = TRUE,
   stopwords_list = NULL,
-  ngram = 1,
+  ngram = 1, # unigrams, bigrams=2, trigrams=3
   tokenize_special = TRUE,
   vocabulary = NULL
 )
@@ -276,7 +273,6 @@ dtm_top <- dtm[, top_terms]
 
 as.matrix(dtm_top[1:5, ])
 ```
-
 ```{r}
 top_terms_table
 ```
