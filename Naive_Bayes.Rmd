@@ -31,8 +31,8 @@ library(textstem)
 library(stringi)
 library(tokenizers)
 library(SnowballC)
-library(textstem)
 library(Matrix)
+library(dplyr)
 ```
 
 ## Helper functions for text preprocessing
@@ -61,7 +61,7 @@ apply_lemmatization_to_tokens <- function(tokens) {
   }
 }
 
-# Generate n-grams from tokens
+# Generate word n-grams from tokens
 generate_ngrams_from_tokens <- function(tokens, n) {
   if (length(tokens) >= n) {
     sapply(seq_len(length(tokens) - n + 1), function(i) {
@@ -211,17 +211,30 @@ build_preprocessing_pipeline <- function(texts,
   term_indices <- unlist(term_indices_list)
   counts <- unlist(counts_list)
 
-  # Create sparse matrix
-  dtm <- Matrix::sparseMatrix(
-    i = doc_indices,
-    j = term_indices,
-    x = counts,
-    dims = c(length(ngram_tokens), length(vocabulary)),
-    dimnames = list(
-      docs = paste0("doc", seq_along(ngram_tokens)),
-      terms = vocabulary
+  # Create sparse matrix - handle empty case
+  if (length(doc_indices) == 0) {
+    # Create empty matrix if no terms found
+    dtm <- Matrix::Matrix(0,
+      nrow = length(ngram_tokens),
+      ncol = length(vocabulary),
+      sparse = TRUE,
+      dimnames = list(
+        docs = paste0("doc", seq_along(ngram_tokens)),
+        terms = vocabulary
+      )
     )
-  )
+  } else {
+    dtm <- Matrix::sparseMatrix(
+      i = doc_indices,
+      j = term_indices,
+      x = counts,
+      dims = c(length(ngram_tokens), length(vocabulary)),
+      dimnames = list(
+        docs = paste0("doc", seq_along(ngram_tokens)),
+        terms = vocabulary
+      )
+    )
+  }
 
   # Update preprocessing info with final statistics
   preprocessing_info$final_vocab_size <- length(vocabulary)
@@ -279,82 +292,130 @@ top_terms_table
 
 
 ## Classifier implementation
-```{r mult_nb_with_pipeline, message=FALSE, warning=FALSE}
-# packages
-library(readr)
-library(Matrix)
-library(dplyr)
 
-#' Trains a Multinomial Naive Bayes classifier.
-#'
-#' @param dtm A training Document-Term Matrix in sparseMatrix format.
-#' @param labels A vector with class labels ("ham" or "spam") for each document in the dtm.
-#' @param laplace A numeric parameter for Laplace smoothing (default is 1) to avoid
-#'                the problem of zero probabilities.
-#' @return Returns a "model" object, which is a list containing the calculated
-#'         probabilities and other information necessary for prediction.
-train_multinomial_nb <- function(dtm, labels, laplace = 1) {
+```{r}
+naiveBayes <- setRefClass("naiveBayes",
+  fields = list(
+    model = "list",
+    vocabulary = "character",
+    preprocessing_params = "list"
+  ),
+  methods = list(
+    # prepare your training data as X - bag of words for each of your
+    # messages and corresponding label for the message encoded as 0 or 1
+    fit = function(X, y, laplace = 1, do_stem = FALSE, do_lemma = TRUE, remove_stopwords = TRUE, ngram = 1, tokenize_special = TRUE) {
+      train_preprocessed <- build_preprocessing_pipeline(
+        texts = X,
+        do_stem = do_stem,
+        do_lemma = do_lemma,
+        remove_stopwords = remove_stopwords,
+        stopwords_list = NULL,
+        ngram = ngram,
+        tokenize_special = tokenize_special,
+        vocabulary = NULL
+      )
 
-  # init
-  labels <- as.character(labels)
-  classes <- sort(unique(labels))
-  n_docs <- nrow(dtm)
-  n_terms <- ncol(dtm)
+      dtm <- train_preprocessed$dtm
+      vocabulary <<- train_preprocessed$vocabulary
+      # Store preprocessing parameters from pipeline
+      preprocessing_params <<- train_preprocessed$preprocessing_info
 
-  # calculate priority probabilities
-  class_counts <- table(labels)
-  class_priors <- class_counts / n_docs
-  log_priors <- log(class_priors) # avoid overflow
+      # Train multinomial Naive Bayes
+      labels <- as.character(y)
+      classes <- sort(unique(labels))
+      n_docs <- nrow(dtm)
+      n_terms <- ncol(dtm)
 
-  # word probability
-  term_counts_by_class <- matrix(0, nrow = length(classes), ncol = n_terms,
-                                 dimnames = list(classes, colnames(dtm)))
-  for (cls in classes) {
-    rows_in_class <- which(labels == cls)
-    term_counts_by_class[cls, ] <- colSums(dtm[rows_in_class, , drop = FALSE])
-  }
+      # calculate priority probabilities
+      class_counts <- table(labels)
+      class_priors <- class_counts / n_docs
+      log_priors <- log(class_priors) # avoid overflow
 
-  class_total_terms <- rowSums(term_counts_by_class)
+      # word probability
+      term_counts_by_class <- matrix(0,
+        nrow = length(classes), ncol = n_terms,
+        dimnames = list(classes, colnames(dtm))
+      )
+      for (cls in classes) {
+        rows_in_class <- which(labels == cls)
+        term_counts_by_class[cls, ] <- colSums(dtm[rows_in_class, , drop = FALSE])
+      }
 
-  # laplace and log
-  numerator <- term_counts_by_class + laplace
-  denominator <- class_total_terms + laplace * n_terms
+      class_total_terms <- rowSums(term_counts_by_class)
 
-  log_likelihoods <- log(t(numerator / denominator)) # log this
+      # laplace and log
+      numerator <- term_counts_by_class + laplace
+      denominator <- class_total_terms + laplace * n_terms
 
-  # final
-  model <- list(
-    classes = classes,               # Class names
-    log_priors = log_priors,         # Log of prior probabilities
-    log_likelihoods = log_likelihoods, # Log of word likelihoods
-    vocabulary = colnames(dtm)       # The vocabulary used for training
+      log_likelihoods <- log(t(numerator / denominator)) # log this
+
+      # Store model
+      model <<- list(
+        classes = classes,
+        log_priors = log_priors,
+        log_likelihoods = log_likelihoods,
+        vocabulary = colnames(dtm)
+      )
+    },
+    predict = function(message) {
+      if (is.null(model) || length(model) == 0) {
+        stop("Model not trained. Please call fit() first.")
+      }
+      test_preprocessed <- build_preprocessing_pipeline(
+        texts = message,
+        do_stem = preprocessing_params$do_stem,
+        do_lemma = preprocessing_params$do_lemma,
+        remove_stopwords = preprocessing_params$remove_stopwords,
+        stopwords_list = NULL,
+        ngram = preprocessing_params$ngram,
+        tokenize_special = preprocessing_params$tokenize_special,
+        vocabulary = vocabulary
+      )
+
+      dtm_new <- test_preprocessed$dtm
+
+      vocab <- model$vocabulary
+      dtm_aligned <- Matrix::Matrix(0,
+        nrow = nrow(dtm_new), ncol = length(vocab),
+        sparse = TRUE,
+        dimnames = list(rownames(dtm_new), vocab)
+      )
+      common_cols <- intersect(colnames(dtm_new), vocab)
+      if (length(common_cols) > 0) {
+        dtm_aligned[, common_cols] <- dtm_new[, common_cols]
+      }
+
+      # Calculate scores
+      # dtm_aligned: n_docs x n_vocab, log_likelihoods: n_vocab x n_classes
+      scores_mat <- as.matrix(dtm_aligned %*% model$log_likelihoods)
+      scores_mat <- sweep(scores_mat, 2, model$log_priors, "+")
+
+      # Get winning class
+      best_class_idx <- max.col(scores_mat, ties.method = "first")
+      predictions <- model$classes[best_class_idx]
+      return(predictions)
+    },
+    score = function(X_test, y_test) {
+      # TODO
+    }
   )
-  return(model)
-}
+)
 
+model <- naiveBayes()
+```
 
-#' Makes predictions for new data using a trained model.
-#'
-#' @param model The trained model object from the `train_multinomial_nb` function. # nolint
-#' @param dtm_new The Document-Term Matrix for new data to be classified.
-#' @return A vector of predicted classes for each document in dtm_new.
-predict_multinomial_nb <- function(model, dtm_new) {
+## Example Usage
 
-  # data matrix
-  vocab <- model$vocabulary
-  dtm_aligned <- Matrix(0, nrow = nrow(dtm_new), ncol = length(vocab),
-                        sparse = TRUE,
-                        dimnames = list(rownames(dtm_new), vocab))
-  common_cols <- intersect(colnames(dtm_new), vocab)
-  dtm_aligned[, common_cols] <- dtm_new[, common_cols] # copy data
+```{r}
+train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
+model <- naiveBayes()
+model$fit(X = train_data$Message, y = train_data$Category)
 
-  # score
-  scores_mat <- as.matrix(dtm_aligned %*% t(model$log_likelihoods)) # complicated multiplications # nolint
-  scores_mat <- sweep(scores_mat, 2, model$log_priors, "+") # and add log to comlete Baues # nolint
+test_message <- "Free money! Call now!"
+prediction <- model$predict(test_message)
+print(paste("Prediction:", prediction))
 
-  # get winning class
-  best_class_idx <- max.col(scores_mat, ties.method = "first")
-  predictions <- model$classes[best_class_idx]
-  return(predictions)
-}
+test_data <- read_csv("data/4-spam/test.csv", show_col_types = FALSE)
+test_predictions <- sapply(test_data$Message, function(msg) model$predict(msg))
+print(paste("First 5 predictions:", paste(test_predictions[1:5], collapse = ", ")))
 ```
