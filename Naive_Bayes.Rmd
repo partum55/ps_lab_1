@@ -17,20 +17,26 @@ knitr::opts_chunk$set(echo = TRUE)
 -   *Nazar Mykhailyshchuk*:
 -   *Nikita Lenyk*:
 -   *Anastasiya Shopska*:
+
 ## Package Installation
 
 ```{r eval=FALSE}
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
-install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem"))
+install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "tidyverse", "tidytext", "ggplot2", "wordcloud", "RColorBrewer"))
 ```
 
 ## Setup
-```{r}
+```{r message=FALSE, warning=FALSE}
 library(readr)
 library(textstem)
 library(stringi)
 library(tokenizers)
 library(SnowballC)
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(wordcloud)
+library(RColorBrewer)
 ```
 
 ## Helper functions for text preprocessing
@@ -264,86 +270,186 @@ top_terms_table
 ```
 
 
-## Visualisation of data
+## Data Visualization
 
-
-
-
+### Analysis of Most Common Words in SPAM and HAM Messages
 
 ```{r}
-library(tidyverse)
-library(tidytext)
-library(ggplot2)
-library(wordcloud)
-library(RColorBrewer)
+# Split data into spam and ham messages
+spam_messages <- train_data$Message[train_data$Category == "spam"]
+ham_messages <- train_data$Message[train_data$Category == "ham"]
 
-
-```
-
-
-
-```{r}
-# Example structure
-# text_df has two columns: "text" and "label" (positive/negative)
-text_df <- data.frame(
-  text = c("I love this movie, amazing!",
-           "This was the worst experience ever",
-           "Absolutely fantastic service",
-           "Terrible quality, never again"),
-  label = c("positive", "negative", "positive", "negative")
+# Process spam messages
+spam_preprocessed <- build_preprocessing_pipeline(
+  texts = spam_messages,
+  do_lemma = TRUE,
+  remove_stopwords = TRUE,
+  ngram = 1,
+  tokenize_special = TRUE,
+  vocabulary = NULL
 )
 
-#       text                               label
-# 1 "I love this movie, amazing!"         positive
-# 2 "This was the worst experience ever"  negative
+# Process ham messages
+ham_preprocessed <- build_preprocessing_pipeline(
+  texts = ham_messages,
+  do_lemma = TRUE,
+  remove_stopwords = TRUE,
+  ngram = 1,
+  tokenize_special = TRUE,
+  vocabulary = NULL
+)
+
+# Get top words for each class
+spam_word_freq <- colSums(spam_preprocessed$dtm)
+ham_word_freq <- colSums(ham_preprocessed$dtm)
+
+# Top 20 words for spam and ham
+top_spam <- head(sort(spam_word_freq, decreasing = TRUE), 20)
+top_ham <- head(sort(ham_word_freq, decreasing = TRUE), 20)
 ```
 
 ```{r}
-tokens <- text_df %>%
-  unnest_tokens(word, text) %>%
-  anti_join(stop_words, by = "word")
-
+head(top_spam, 10)
 ```
 
 ```{r}
-word_counts <- tokens %>%
-  group_by(label, word) %>%
-  summarise(n = n()) %>%
-  arrange(desc(n))
-
+head(top_ham, 10)
 ```
 
-```{r}
+### 1. Histogram of Most Common Words
 
-word_counts %>%
-  ggplot(aes(x = reorder(word, n), y = n, fill = label)) +
-  geom_col(show.legend = FALSE) +
-  facet_wrap(~label, scales = "free") +
+```{r}
+# Create data frame for visualization
+spam_df <- data.frame(
+  word = names(top_spam),
+  freq = as.numeric(top_spam),
+  type = "SPAM",
+  stringsAsFactors = FALSE
+)
+
+ham_df <- data.frame(
+  word = names(top_ham),
+  freq = as.numeric(top_ham),
+  type = "HAM",
+  stringsAsFactors = FALSE
+)
+
+# Combine data
+words_combined <- rbind(spam_df, ham_df)
+
+# Create histogram
+ggplot(words_combined, aes(x = reorder(word, freq), y = freq, fill = type)) +
+  geom_col(show.legend = TRUE) +
+  facet_wrap(~type, scales = "free", ncol = 1) +
   coord_flip() +
-  labs(title = "Most common words in positive vs negative reviews",
-       x = "Word", y = "Frequency")
+  labs(
+    title = "Most Common Words in SPAM and HAM Messages",
+    subtitle = "Top 20 words after preprocessing pipeline",
+    x = "Words",
+    y = "Frequency",
+    fill = "Message Type"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("SPAM" = "#FF6B6B", "HAM" = "#4ECDC4"))
+```
+
+### 2. Side-by-side Comparison
+
+```{r}
+# Take top 10 for better readability
+top_spam_10 <- head(top_spam, 10)
+top_ham_10 <- head(top_ham, 10)
+
+# Create data frame
+comparison_df <- data.frame(
+  word = c(names(top_spam_10), names(top_ham_10)),
+  freq = c(as.numeric(top_spam_10), as.numeric(top_ham_10)),
+  type = c(rep("SPAM", 10), rep("HAM", 10))
+)
+
+ggplot(comparison_df, aes(x = reorder(word, freq), y = freq, fill = type)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Top 10 Words Comparison: SPAM vs HAM",
+    x = "Words",
+    y = "Frequency",
+    fill = "Type"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("SPAM" = "#FF6B6B", "HAM" = "#4ECDC4")) +
+  theme(legend.position = "bottom")
+```
+
+### 3. Analysis of Unique Words
+
+```{r}
+# Find words that exist only in spam or only in ham
+spam_only_words <- setdiff(names(spam_word_freq), names(ham_word_freq))
+ham_only_words <- setdiff(names(ham_word_freq), names(spam_word_freq))
+
+# Create summary data frame
+unique_words_summary <- data.frame(
+  Category = c("SPAM only words", "HAM only words"),
+  Count = c(length(spam_only_words), length(ham_only_words))
+)
+unique_words_summary
 ```
 
 ```{r}
-positive_words <- subset(word_counts, label == "positive")
-negative_words <- subset(word_counts, label == "negative")
-
-par(mfrow = c(1,2)) # side-by-side plots
-
-wordcloud(words = positive_words$word, 
-          freq = positive_words$n, 
-          min.freq = 1,     # ↓ дозволить малювати навіть слова з 1 входженням
-          scale = c(2, 0.5),
-          colors = brewer.pal(8, "Greens"))
-
-wordcloud(words = positive_words$word, 
-          freq = positive_words$n, 
-          min.freq = 1,     #  дозволить малювати навіть слова з 1 входженням
-          scale = c(2, 0.5),
-          colors = brewer.pal(8, "Reds"))
+# Top unique words in SPAM
+if (length(spam_only_words) > 0) {
+  spam_unique_freq <- spam_word_freq[spam_only_words]
+  top_spam_unique <- head(sort(spam_unique_freq, decreasing = TRUE), 10)
+  data.frame(
+    Word = names(top_spam_unique),
+    Frequency = as.numeric(top_spam_unique),
+    row.names = NULL
+  )
+}
 ```
 
+```{r}
+# Top unique words in HAM
+if (length(ham_only_words) > 0) {
+  ham_unique_freq <- ham_word_freq[ham_only_words]
+  top_ham_unique <- head(sort(ham_unique_freq, decreasing = TRUE), 10)
+  data.frame(
+    Word = names(top_ham_unique),
+    Frequency = as.numeric(top_ham_unique),
+    row.names = NULL
+  )
+}
+```
 
+### 4. Dataset Statistics
+
+```{r}
+# Dataset overview
+dataset_stats <- data.frame(
+  Metric = c("Total messages", "SPAM messages", "HAM messages", "SPAM percentage"),
+  Value = c(
+    nrow(train_data),
+    sum(train_data$Category == "spam"),
+    sum(train_data$Category == "ham"),
+    paste0(round(100 * sum(train_data$Category == "spam") / nrow(train_data), 2), "%")
+  )
+)
+dataset_stats
+```
+
+```{r}
+# Vocabulary statistics
+vocab_stats <- data.frame(
+  Metric = c("Unique words in SPAM", "Unique words in HAM", "Total vocabulary size"),
+  Count = c(
+    length(spam_word_freq),
+    length(ham_word_freq),
+    length(union(names(spam_word_freq), names(ham_word_freq)))
+  )
+)
+vocab_stats
+```
 
 ## Classifier implementation
 
