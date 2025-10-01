@@ -278,6 +278,87 @@ top_terms_table
 ```
 
 
+## Visualisation of data
+
+
+
+
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(wordcloud)
+library(RColorBrewer)
+
+
+```
+
+
+
+```{r}
+# Example structure
+# text_df has two columns: "text" and "label" (positive/negative)
+text_df <- data.frame(
+  text = c("I love this movie, amazing!",
+           "This was the worst experience ever",
+           "Absolutely fantastic service",
+           "Terrible quality, never again"),
+  label = c("positive", "negative", "positive", "negative")
+)
+
+#       text                               label
+# 1 "I love this movie, amazing!"         positive
+# 2 "This was the worst experience ever"  negative
+```
+
+```{r}
+tokens <- text_df %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+
+```
+
+```{r}
+word_counts <- tokens %>%
+  group_by(label, word) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+
+```
+
+```{r}
+
+word_counts %>%
+  ggplot(aes(x = reorder(word, n), y = n, fill = label)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~label, scales = "free") +
+  coord_flip() +
+  labs(title = "Most common words in positive vs negative reviews",
+       x = "Word", y = "Frequency")
+```
+
+```{r}
+positive_words <- subset(word_counts, label == "positive")
+negative_words <- subset(word_counts, label == "negative")
+
+par(mfrow = c(1,2)) # side-by-side plots
+
+wordcloud(words = positive_words$word, 
+          freq = positive_words$n, 
+          min.freq = 1,     # ↓ дозволить малювати навіть слова з 1 входженням
+          scale = c(2, 0.5),
+          colors = brewer.pal(8, "Greens"))
+
+wordcloud(words = positive_words$word, 
+          freq = positive_words$n, 
+          min.freq = 1,     #  дозволить малювати навіть слова з 1 входженням
+          scale = c(2, 0.5),
+          colors = brewer.pal(8, "Reds"))
+```
+
+
+
 ## Classifier implementation
 ```{r mult_nb_with_pipeline, message=FALSE, warning=FALSE}
 library(readr)
