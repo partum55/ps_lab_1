@@ -361,8 +361,81 @@ wordcloud(words = positive_words$word,
 
 ## Classifier implementation
 ```{r mult_nb_with_pipeline, message=FALSE, warning=FALSE}
+# packages
 library(readr)
 library(Matrix)
+library(dplyr)
+
+#' Trains a Multinomial Naive Bayes classifier.
+#'
+#' @param dtm A training Document-Term Matrix in sparseMatrix format.
+#' @param labels A vector with class labels ("ham" or "spam") for each document in the dtm.
+#' @param laplace A numeric parameter for Laplace smoothing (default is 1) to avoid
+#'                the problem of zero probabilities.
+#' @return Returns a "model" object, which is a list containing the calculated
+#'         probabilities and other information necessary for prediction.
+train_multinomial_nb <- function(dtm, labels, laplace = 1) {
+
+  # init
+  labels <- as.character(labels)
+  classes <- sort(unique(labels))
+  n_docs <- nrow(dtm)
+  n_terms <- ncol(dtm)
+
+  # calculate priority probabilities
+  class_counts <- table(labels)
+  class_priors <- class_counts / n_docs
+  log_priors <- log(class_priors) # avoid overflow
+
+  # word probability
+  term_counts_by_class <- matrix(0, nrow = length(classes), ncol = n_terms,
+                                 dimnames = list(classes, colnames(dtm)))
+  for (cls in classes) {
+    rows_in_class <- which(labels == cls)
+    term_counts_by_class[cls, ] <- colSums(dtm[rows_in_class, , drop = FALSE])
+  }
+
+  class_total_terms <- rowSums(term_counts_by_class)
+
+  # laplace and log
+  numerator <- term_counts_by_class + laplace
+  denominator <- class_total_terms + laplace * n_terms
+
+  log_likelihoods <- log(t(numerator / denominator)) # log this
+
+  # final
+  model <- list(
+    classes = classes,               # Class names
+    log_priors = log_priors,         # Log of prior probabilities
+    log_likelihoods = log_likelihoods, # Log of word likelihoods
+    vocabulary = colnames(dtm)       # The vocabulary used for training
+  )
+  return(model)
+}
 
 
+#' Makes predictions for new data using a trained model.
+#'
+#' @param model The trained model object from the `train_multinomial_nb` function. # nolint
+#' @param dtm_new The Document-Term Matrix for new data to be classified.
+#' @return A vector of predicted classes for each document in dtm_new.
+predict_multinomial_nb <- function(model, dtm_new) {
+
+  # data matrix
+  vocab <- model$vocabulary
+  dtm_aligned <- Matrix(0, nrow = nrow(dtm_new), ncol = length(vocab),
+                        sparse = TRUE,
+                        dimnames = list(rownames(dtm_new), vocab))
+  common_cols <- intersect(colnames(dtm_new), vocab)
+  dtm_aligned[, common_cols] <- dtm_new[, common_cols] # copy data
+
+  # score
+  scores_mat <- as.matrix(dtm_aligned %*% t(model$log_likelihoods)) # complicated multiplications # nolint
+  scores_mat <- sweep(scores_mat, 2, model$log_priors, "+") # and add log to comlete Baues # nolint
+
+  # get winning class
+  best_class_idx <- max.col(scores_mat, ties.method = "first")
+  predictions <- model$classes[best_class_idx]
+  return(predictions)
+}
 ```
