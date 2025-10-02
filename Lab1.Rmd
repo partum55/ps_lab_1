@@ -14,9 +14,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Work breakdown
 
--   *Nazar Mykhailyshchuk*:
--   *Nikita Lenyk*:
--   *Anastasiya Shopska*:
+-   *Nazar Mykhailyshchuk*: Bayes classifier implementation
+-   *Nikita Lenyk*: Data preprocessing, parametes comparison experiments
+-   *Anastasiya Shopska*: Data Visualisation
 
 ## Package Installation
 
@@ -26,7 +26,7 @@ install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "t
 ```
 
 ## Setup
-```{r message=FALSE, warning=FALSE}
+```{r libraries, message=FALSE, warning=FALSE}
 library(readr)
 library(textstem)
 library(stringi)
@@ -80,6 +80,7 @@ generate_ngrams_from_tokens <- function(tokens, n) {
 ```
 
 ## Text Preprocessing Pipeline
+
 ```{r text-preprocess}
 #' Build Text Preprocessing Pipeline for SMS Spam Classification
 #'
@@ -232,9 +233,11 @@ build_preprocessing_pipeline <- function(texts,
 }
 ```
 
-## Example Usage
+## Visualisation of data
 
-```{r example-usage}
+### Visualisation of document term matrix and vocabulary
+
+```{r dtm-vocab}
 train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
 
 train_preprocessed <- build_preprocessing_pipeline(
@@ -264,34 +267,43 @@ top_terms_table <- data.frame(
 
 top_terms <- top_terms_table$term
 dtm_top <- dtm[, top_terms]
+```
 
+### DTM
+
+```{r dtm}
 dtm_top[1:5, ]
 ```
-```{r run-usage}
+### Top terms by frequency
+
+```{r top-terms}
 top_terms_table
 ```
 
-## Visualisation of data
-```{r text-preprocessing-visual}
-text_df <- train_data %>%
-  rename(
-    text = Message,
-    label = Category
-  ) %>%
-  mutate(label = as.character(label))
+### Create word counts by class for visualization
 
-tokens <- text_df %>%
-  unnest_tokens(word, text) %>%
-  anti_join(stop_words, by = "word") %>%
-  filter(str_detect(word, "^[a-z]+$"))
+```{r word-counts-by-class}
+word_counts <- data.frame()
 
-word_counts <- tokens %>%
-  group_by(label, word) %>%
-  summarise(n = n(), .groups = "drop") %>%
-  arrange(desc(n))
+for (class_label in unique(train_data$Category)) {
+  class_indices <- which(train_data$Category == class_label)
+  class_word_counts <- colSums(dtm[class_indices, , drop = FALSE])
+  class_df <- data.frame(
+    label = class_label,
+    word = names(class_word_counts),
+    n = as.numeric(class_word_counts),
+    stringsAsFactors = FALSE
+  )
 
-head(word_counts, 10)
+  class_df <- class_df[class_df$n > 0, ]
+  word_counts <- rbind(word_counts, class_df)
+}
+
+word_counts <- word_counts %>%
+  arrange(label, desc(n))
 ```
+
+### Word frequency visualisations histogram and wordcloud
 
 ```{r top-words-by-class}
 top_words_by_class <- word_counts %>%
@@ -354,8 +366,6 @@ naiveBayes <- setRefClass("naiveBayes",
     preprocessing_params = "list"
   ),
   methods = list(
-    # prepare your training data as X - bag of words for each of your
-    # messages and corresponding label for the message encoded as 0 or 1
     fit = function(X, y, laplace = 1, do_stem = FALSE, do_lemma = TRUE, remove_stopwords = TRUE, ngram = 1, tokenize_special = TRUE) {
       train_preprocessed <- build_preprocessing_pipeline(
         texts = X,
@@ -400,7 +410,7 @@ naiveBayes <- setRefClass("naiveBayes",
       numerator <- term_counts_by_class + laplace
       denominator <- class_total_terms + laplace * n_terms
 
-      log_likelihoods <- log(t(numerator / denominator)) # log this
+      log_likelihoods <- log(t(numerator / denominator))
 
       # Store model
       model <<- list(
@@ -510,9 +520,7 @@ naiveBayes <- setRefClass("naiveBayes",
 model <- naiveBayes()
 ```
 
-
-## Example Usage
-
+## Example Usage (Predicting Spam vs Ham) for single message and batch of messages
 
 ```{r run-usage-classified}
 train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
@@ -532,11 +540,10 @@ print(paste("First 5 predictions:", paste(test_predictions[1:5], collapse = ", "
 
 ### Testing Different Preprocessing Parameters
 
-```{r}
+```{r setting-experiments}
 # Load test data for evaluation
 test_data <- read_csv("data/4-spam/test.csv", show_col_types = FALSE)
 
-# Define different parameter combinations to test
 experiments <- list(
   "Baseline (Lemma + No Stopwords + Unigrams + Special)" = list(
     do_stem = FALSE, do_lemma = TRUE, remove_stopwords = FALSE,
@@ -560,15 +567,12 @@ experiments <- list(
   )
 )
 
-# Store results for comparison
 experiment_results <- list()
 confusion_matrices <- list()
 
 # Run experiments
 for (exp_name in names(experiments)) {
   params <- experiments[[exp_name]]
-
-  # Create and train model with specific parameters
   model_exp <- naiveBayes()
   model_exp$fit(
     X = train_data$Message,
@@ -579,16 +583,12 @@ for (exp_name in names(experiments)) {
     ngram = params$ngram,
     tokenize_special = params$tokenize_special
   )
-
   # Evaluate on test data
   results <- model_exp$score(test_data$Message, test_data$Category)
-
-  # Store results
   experiment_results[[exp_name]] <- results
   confusion_matrices[[exp_name]] <- results$confusion_matrix
 }
 
-# Display experiment progress
 data.frame(
   Experiment = names(experiment_results),
   Accuracy = round(sapply(experiment_results, function(x) x$accuracy), 4),
@@ -596,10 +596,7 @@ data.frame(
 )
 ```
 
-### Results Summary Table
-
-```{r}
-# Create comprehensive comparison table
+```{r creating-summary-table}
 comparison_data <- data.frame(
   Experiment = names(experiment_results),
   Accuracy = sapply(experiment_results, function(x) x$accuracy),
@@ -633,19 +630,7 @@ comparison_data <- data.frame(
 )
 ```
 
-```{r}
-# Display compact results table with better formatting
-compact_results <- data.frame(
-  Configuration = c("1. Baseline", "2. Stemming", "3. Bigrams", "4. Trigrams", "5. No Special"),
-  Accuracy = paste0(round(comparison_data$Accuracy * 100, 1), "%"),
-  Predictions = paste0(comparison_data$Correct, "/", comparison_data$Total),
-  SPAM_F1 = round(comparison_data$SPAM_F1, 3),
-  HAM_F1 = round(comparison_data$HAM_F1, 3)
-)
-compact_results
-```
-
-```{r}
+```{r detailed-metrics-tables}
 # Detailed SPAM metrics table
 spam_metrics <- data.frame(
   Configuration = c("Baseline", "Stemming", "Bigrams", "Trigrams", "No Special"),
@@ -657,7 +642,7 @@ print("SPAM Detection Performance:")
 spam_metrics
 ```
 
-```{r}
+```{r detailed-ham-metrics}
 # Detailed HAM metrics table
 ham_metrics <- data.frame(
   Configuration = c("Baseline", "Stemming", "Bigrams", "Trigrams", "No Special"),
@@ -671,7 +656,7 @@ ham_metrics
 
 ### 1. Acсuracy Comparison Bar Plot
 
-```{r fig.width=12, fig.height=6}
+```{r fig.width=12, fig.height=10}
 # Prepare data for plotting
 plot_data <- comparison_data
 plot_data$Experiment <- factor(plot_data$Experiment, levels = plot_data$Experiment)
@@ -700,7 +685,7 @@ ggplot(plot_data, aes(x = Experiment, y = Accuracy, fill = Experiment)) +
 
 ### 2. Detailed Metrics Comparison
 
-```{r fig.width=14, fig.height=8}
+```{r fig.width=20, fig.height=10}
 metrics_long <- comparison_data %>%
   select(
     Experiment, SPAM_Precision, SPAM_Recall, SPAM_F1,
@@ -709,7 +694,6 @@ metrics_long <- comparison_data %>%
   pivot_longer(cols = -Experiment, names_to = "Metric", values_to = "Value") %>%
   separate(Metric, into = c("Class", "Metric_Type"), sep = "_")
 
-# Create detailed metrics plot
 ggplot(metrics_long, aes(x = Experiment, y = Value, fill = Metric_Type)) +
   geom_col(position = "dodge", alpha = 0.8) +
   facet_wrap(~Class, ncol = 2, scales = "free") +
@@ -736,7 +720,7 @@ ggplot(metrics_long, aes(x = Experiment, y = Value, fill = Metric_Type)) +
 
 ### 3. Confusion Matrices Visualization
 
-```{r fig.width=16, fig.height=12}
+```{r fig.width=16, fig.height=10}
 # Create a function to plot confusion matrix with TP/TN/FP/FN labels
 plot_confusion_matrix <- function(cm, title) {
   # Convert to data frame for ggplot
@@ -791,28 +775,23 @@ plot_confusion_matrix <- function(cm, title) {
     labs(title = title, x = "Actual", y = "Predicted")
 }
 
-# Create plots for all confusion matrices
 confusion_plots <- list()
 for (i in seq_along(confusion_matrices)) {
   exp_name <- names(confusion_matrices)[i]
-  # Shorten title for better display
   short_title <- gsub("Baseline \\(|\\)", "", exp_name)
   short_title <- gsub(" \\+ ", "\n+ ", short_title)
   confusion_plots[[i]] <- plot_confusion_matrix(confusion_matrices[[i]], short_title)
 }
 
-# Arrange plots in a grid (3x2 for 5 experiments)
 do.call(grid.arrange, c(confusion_plots, ncol = 3))
 ```
 
 ### 4. Best Configuration Analysis
 
 ```{r}
-# Find best performing configuration
 best_accuracy_idx <- which.max(comparison_data$Accuracy)
 best_config <- comparison_data[best_accuracy_idx, ]
 
-# Best configuration summary
 best_summary <- data.frame(
   Metric = c("Best Configuration", "Accuracy (%)", "SPAM F1-Score", "HAM F1-Score"),
   Value = c(
@@ -827,11 +806,66 @@ best_summary
 
 ## Conclusions
 
-**Mathematical Foundation:** We implemented a Multinomial Naive Bayes classifier based on Bayes' theorem: P(class|message) ∝ P(class) × ∏P(word|class). The method uses Laplace smoothing and log-probabilities to avoid numerical underflow.
+### Mathematical Foundation
 
-**Pros:** Simple, fast, works well with small datasets, handles high-dimensional sparse data effectively, probabilistic output.
+We implemented a Multinomial Naive Bayes classifier based on Bayes' theorem. The mathematical foundation consists of several key components:
 
-**Cons:** Strong independence assumption (words are independent), sensitive to skewed data, poor performance with unseen word combinations in test data.
+**1. Bayes' Theorem:**
+$$P(c|d) = \frac{P(d|c) \cdot P(c)}{P(d)}$$
+
+Where:
+- $P(c|d)$ is the posterior probability of class $c$ given document $d$
+- $P(d|c)$ is the likelihood of document $d$ given class $c$
+- $P(c)$ is the prior probability of class $c$
+- $P(d)$ is the evidence (marginal probability of document $d$)
+
+**2. Classification Decision Rule:**
+
+For classification, we calculate the probability for each class:
+- Calculate $P(\text{spam}|d) = P(d|\text{spam}) \cdot P(\text{spam})$
+- Calculate $P(\text{ham}|d) = P(d|\text{ham}) \cdot P(\text{ham})$
+- If $P(\text{spam}|d) > P(\text{ham}|d)$, classify as spam, otherwise as ham
+
+**3. Multinomial Naive Bayes Model:**
+
+Assuming conditional independence between words (naive assumption), the likelihood becomes:
+$$P(d|c) = \prod_{i=1}^{|V|} P(w_i|c)^{n_i}$$
+
+Where:
+- $|V|$ is the vocabulary size
+- $w_i$ is the $i$-th word in vocabulary
+- $n_i$ is the count of word $w_i$ in document $d$
+
+**4. Parameter Estimation:**
+
+**Prior Probability:**
+$$P(c) = \frac{N_c}{N}$$
+Where $N_c$ is the number of documents in class $c$ and $N$ is the total number of documents.
+
+**Word Probability with Laplace Smoothing:**
+$$P(w_i|c) = \frac{\text{count}(w_i, c) + \alpha}{\sum_{w \in V} \text{count}(w, c) + \alpha|V|}$$
+
+Where:
+- $\text{count}(w_i, c)$ is the frequency of word $w_i$ in class $c$
+- $\alpha$ is the smoothing parameter (Laplace smoothing, typically $\alpha = 1$)
+- $|V|$ is the vocabulary size
+
+**5. Log-Space Computation:**
+
+To avoid numerical underflow, we work in log-space:
+$$\log P(c|d) \propto \log P(c) + \sum_{i=1}^{|V|} n_i \log P(w_i|c)$$
+
+**Final Classification in Log-Space:**
+
+For each class, calculate the score:
+$$\text{Score}(c) = \log P(c) + \sum_{i=1}^{|V|} n_i \log P(w_i|c)$$
+
+Then compare:
+- If $\text{Score}(\text{spam}) > \text{Score}(\text{ham})$, classify as spam
+- Otherwise, classify as ham
+
+**Pros:** Works well with small datasets, handles high-dimensional sparse data effectively, probabilistic output.
+
+**Cons:** Strong independence assumption (words are independent), sensitive to unstable data, poor performance with unseen word combinations in test data.
 
 **Accuracy vs F1-Score:** Accuracy can be misleading with imbalanced datasets (e.g., 95% ham, 5% spam). A model predicting "all ham" would have 95% accuracy but 0% spam detection. F1-score balances precision and recall, providing better insight into performance on minority classes, which is crucial for spam detection where missing spam (false negatives) is costly.
->>>>>>> feature/score
