@@ -497,11 +497,3 @@ test_data <- read_csv("data/4-spam/test.csv", show_col_types = FALSE)
 test_predictions <- sapply(test_data$Message, function(msg) model$predict(msg))
 print(paste("First 5 predictions:", paste(test_predictions[1:5], collapse = ", ")))
 ```
-
-```{r run-usage-eval}
-test_results <- model$score(X_test = test_data$Message, y_test = test_data$Category)
-
-print(paste("Test Accuracy:", round(test_results$accuracy, 4)))
-print("Confusion Matrix:")
-print(test_results$confusion_matrix)
-```
