@@ -24,7 +24,6 @@ knitr::opts_chunk$set(echo = TRUE)
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
 install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "tidyverse", "tidytext", "ggplot2", "wordcloud", "RColorBrewer", "gridExtra", "tidyr"))
 ```
-```
 
 ## Setup
 ```{r message=FALSE, warning=FALSE}
@@ -288,7 +287,7 @@ tokens <- text_df %>%
 
 word_counts <- tokens %>%
   group_by(label, word) %>%
-  summarise(n = n(), .groups = 'drop') %>%
+  summarise(n = n(), .groups = "drop") %>%
   arrange(desc(n))
 
 head(word_counts, 10)
@@ -322,65 +321,27 @@ spam_words <- subset(filtered_word_counts, label == "spam")
 
 par(mfrow = c(1, 2), mar = c(0, 0, 3, 0))
 
-wordcloud(words = ham_words$word,
-          freq = ham_words$n,
-          min.freq = 5,
-          max.words = 100,
-          scale = c(3, 0.5),
-          colors = brewer.pal(8, "Dark2"),
-          main = "Ham words")
+wordcloud(
+  words = ham_words$word,
+  freq = ham_words$n,
+  min.freq = 5,
+  max.words = 100,
+  scale = c(3, 0.5),
+  colors = brewer.pal(8, "Dark2"),
+  main = "Ham words"
+)
 
-wordcloud(words = spam_words$word,
-          freq = spam_words$n,
-          min.freq = 5,
-          max.words = 100,
-          scale = c(3, 0.5),
-          colors = brewer.pal(8, "Set1"),
-          main = "Spam words")
+wordcloud(
+  words = spam_words$word,
+  freq = spam_words$n,
+  min.freq = 5,
+  max.words = 100,
+  scale = c(3, 0.5),
+  colors = brewer.pal(8, "Set1"),
+  main = "Spam words"
+)
 
 par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
-```
-
-```{r}
-# Top unique words in HAM
-if (length(ham_only_words) > 0) {
-  ham_unique_freq <- ham_word_freq[ham_only_words]
-  top_ham_unique <- head(sort(ham_unique_freq, decreasing = TRUE), 10)
-  data.frame(
-    Word = names(top_ham_unique),
-    Frequency = as.numeric(top_ham_unique),
-    row.names = NULL
-  )
-}
-```
-
-### 4. Dataset Statistics
-
-```{r}
-# Dataset overview
-dataset_stats <- data.frame(
-  Metric = c("Total messages", "SPAM messages", "HAM messages", "SPAM percentage"),
-  Value = c(
-    nrow(train_data),
-    sum(train_data$Category == "spam"),
-    sum(train_data$Category == "ham"),
-    paste0(round(100 * sum(train_data$Category == "spam") / nrow(train_data), 2), "%")
-  )
-)
-dataset_stats
-```
-
-```{r}
-# Vocabulary statistics
-vocab_stats <- data.frame(
-  Metric = c("Unique words in SPAM", "Unique words in HAM", "Total vocabulary size"),
-  Count = c(
-    length(spam_word_freq),
-    length(ham_word_freq),
-    length(union(names(spam_word_freq), names(ham_word_freq)))
-  )
-)
-vocab_stats
 ```
 
 ## Classifier implementation
