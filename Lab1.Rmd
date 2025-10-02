@@ -308,7 +308,6 @@ word_counts <- word_counts %>%
 ```{r top-words-by-class}
 top_words_by_class <- word_counts %>%
   group_by(label) %>%
-  filter(!word %in% c("email", "url", "phone", "money", "longnum")) %>%
   top_n(15, n) %>%
   ungroup()
 
@@ -318,18 +317,25 @@ top_words_by_class %>%
   facet_wrap(~label, scales = "free") +
   coord_flip() +
   labs(
-    title = "15 Most Common Words in Ham vs Spam Messages",
-    x = "Word",
+    title = "Top 15 Words/Tokens in Ham vs Spam (Preprocessed Data)",
+    x = "Word/Token",
     y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8),
+    plot.title = element_text(size = 12),
+    strip.text = element_text(size = 10),
+    panel.spacing = unit(0.5, "cm")
   )
 ```
 
 ```{r word-cloud}
-filtered_word_counts <- word_counts %>%
+regular_words <- word_counts %>%
   filter(!word %in% c("email", "url", "phone", "money", "longnum"))
 
-ham_words <- subset(filtered_word_counts, label == "ham")
-spam_words <- subset(filtered_word_counts, label == "spam")
+ham_words <- subset(regular_words, label == "ham")
+spam_words <- subset(regular_words, label == "spam")
 
 par(mfrow = c(1, 2), mar = c(0, 0, 3, 0))
 
@@ -339,9 +345,9 @@ wordcloud(
   min.freq = 5,
   max.words = 100,
   scale = c(3, 0.5),
-  colors = brewer.pal(8, "Dark2"),
-  main = "Ham words"
+  colors = brewer.pal(8, "Dark2")
 )
+title("Ham Messages", cex.main = 1.2)
 
 wordcloud(
   words = spam_words$word,
@@ -349,9 +355,9 @@ wordcloud(
   min.freq = 5,
   max.words = 100,
   scale = c(3, 0.5),
-  colors = brewer.pal(8, "Set1"),
-  main = "Spam words"
+  colors = brewer.pal(8, "Set1")
 )
+title("Spam Messages", cex.main = 1.2)
 
 par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
 ```
@@ -588,12 +594,6 @@ for (exp_name in names(experiments)) {
   experiment_results[[exp_name]] <- results
   confusion_matrices[[exp_name]] <- results$confusion_matrix
 }
-
-data.frame(
-  Experiment = names(experiment_results),
-  Accuracy = round(sapply(experiment_results, function(x) x$accuracy), 4),
-  Correct_Predictions = sapply(experiment_results, function(x) paste0(x$correct, "/", x$total))
-)
 ```
 
 ```{r creating-summary-table}
@@ -656,24 +656,26 @@ ham_metrics
 
 ### 1. Acсuracy Comparison Bar Plot
 
-```{r fig.width=12, fig.height=10}
-# Prepare data for plotting
+```{r fig.width=14, fig.height=8}
+# Prepare data for plotting with shorter labels
 plot_data <- comparison_data
-plot_data$Experiment <- factor(plot_data$Experiment, levels = plot_data$Experiment)
+plot_data$Short_Label <- c("Baseline\n(Lemma+NoStop)", "Stemming\n(+Stopwords)", "Bigrams\n(Lemma+Stop)", "Trigrams\n(Lemma+Stop)", "No Special\n(Lemma+Stop)")
+plot_data$Short_Label <- factor(plot_data$Short_Label, levels = plot_data$Short_Label)
 
-ggplot(plot_data, aes(x = Experiment, y = Accuracy, fill = Experiment)) +
+ggplot(plot_data, aes(x = Short_Label, y = Accuracy, fill = Short_Label)) +
   geom_col(alpha = 0.8, width = 0.7) +
   geom_text(aes(label = paste0(round(Accuracy * 100, 2), "%")),
-    vjust = -0.5, size = 4, fontface = "bold"
+    vjust = -0.5, size = 3.5, fontface = "bold"
   ) +
-  scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
+  scale_y_continuous(limits = c(0, 1.05), labels = scales::percent) +
   scale_fill_brewer(type = "qual", palette = "Set2") +
   theme_minimal() +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.x = element_text(size = 9, lineheight = 0.8),
     legend.position = "none",
-    plot.title = element_text(size = 16, hjust = 0.5),
-    axis.title = element_text(size = 12)
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title = element_text(size = 11),
+    plot.margin = margin(20, 20, 20, 20)
   ) +
   labs(
     title = "Model Accuracy Comparison Across Different Parameters",
@@ -685,21 +687,25 @@ ggplot(plot_data, aes(x = Experiment, y = Accuracy, fill = Experiment)) +
 
 ### 2. Detailed Metrics Comparison
 
-```{r fig.width=20, fig.height=10}
-metrics_long <- comparison_data %>%
+```{r fig.width=16, fig.height=8}
+# Add shorter labels for better readability
+comparison_data_short <- comparison_data
+comparison_data_short$Short_Label <- c("Baseline", "Stemming", "Bigrams", "Trigrams", "No Special")
+
+metrics_long <- comparison_data_short %>%
   select(
-    Experiment, SPAM_Precision, SPAM_Recall, SPAM_F1,
+    Short_Label, SPAM_Precision, SPAM_Recall, SPAM_F1,
     HAM_Precision, HAM_Recall, HAM_F1
   ) %>%
-  pivot_longer(cols = -Experiment, names_to = "Metric", values_to = "Value") %>%
+  pivot_longer(cols = -Short_Label, names_to = "Metric", values_to = "Value") %>%
   separate(Metric, into = c("Class", "Metric_Type"), sep = "_")
 
-ggplot(metrics_long, aes(x = Experiment, y = Value, fill = Metric_Type)) +
+ggplot(metrics_long, aes(x = Short_Label, y = Value, fill = Metric_Type)) +
   geom_col(position = "dodge", alpha = 0.8) +
   facet_wrap(~Class, ncol = 2, scales = "free") +
   geom_text(aes(label = round(Value, 3)),
     position = position_dodge(width = 0.9),
-    vjust = -0.5, size = 3
+    vjust = -0.5, size = 2.8
   ) +
   scale_y_continuous(limits = c(0, 1.1)) +
   scale_fill_brewer(type = "qual", palette = "Set1") +
@@ -720,7 +726,7 @@ ggplot(metrics_long, aes(x = Experiment, y = Value, fill = Metric_Type)) +
 
 ### 3. Confusion Matrices Visualization
 
-```{r fig.width=16, fig.height=10}
+```{r fig.width=18, fig.height=12}
 # Create a function to plot confusion matrix with TP/TN/FP/FN labels
 plot_confusion_matrix <- function(cm, title) {
   # Convert to data frame for ggplot
@@ -866,6 +872,6 @@ Then compare:
 
 **Pros:** Works well with small datasets, handles high-dimensional sparse data effectively, probabilistic output.
 
-**Cons:** Strong independence assumption (words are independent), sensitive to unstable data, poor performance with unseen word combinations in test data.
+**Cons:** Strong independence assumption (words are independent), sensitive to unstable data, bad performance with unseen word combinations in test data.
 
-**Accuracy vs F1-Score:** Accuracy can be misleading with imbalanced datasets (e.g., 95% ham, 5% spam). A model predicting "all ham" would have 95% accuracy but 0% spam detection. F1-score balances precision and recall, providing better insight into performance on minority classes, which is crucial for spam detection where missing spam (false negatives) is costly.
+**Accuracy vs F1-Score:** Accuracy can be misleading with imbalanced datasets (For example 95% ham, 5% spam). A model predicting "all ham" would have 95% accuracy but 0% spam detection. F1-score balances precision and recall, providing better insight into performance on minority classes, which is crucial for spam detection where missing spam (false negatives) is costly.
