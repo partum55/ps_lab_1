@@ -17,20 +17,29 @@ knitr::opts_chunk$set(echo = TRUE)
 -   *Nazar Mykhailyshchuk*:
 -   *Nikita Lenyk*:
 -   *Anastasiya Shopska*:
+
 ## Package Installation
 
-```{r install-packages, eval=FALSE}
+```{r message=FALSE, eval=FALSE}
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
-install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem"))
+install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem", "tidyverse", "tidytext", "ggplot2", "wordcloud", "RColorBrewer", "gridExtra", "tidyr"))
+```
 ```
 
 ## Setup
-```{r include-packages}
+```{r message=FALSE, warning=FALSE}
 library(readr)
 library(textstem)
 library(stringi)
 library(tokenizers)
 library(SnowballC)
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(wordcloud)
+library(RColorBrewer)
+library(gridExtra)
+library(tidyr)
 ```
 
 ## Helper functions for text preprocessing
@@ -263,27 +272,11 @@ dtm_top[1:5, ]
 top_terms_table
 ```
 
-
 ## Visualisation of data
-
-
-```{r load-packages-visual, eval=FALSE}
-options(repos = c(CRAN = "https://cran.rstudio.com/"))
-install.packages(c("tidyverse", "tidytext", "ggplot2", "wordcloud", "RColorBrewer"))
-```
-
-```{r incluade-packages-visual}
-library(tidyverse)
-library(tidytext)
-library(ggplot2)
-library(wordcloud)
-library(RColorBrewer)
-```
-
 ```{r text-preprocessing-visual}
-text_df <- train_data %>% 
+text_df <- train_data %>%
   rename(
-    text = Message, 
+    text = Message,
     label = Category
   ) %>%
   mutate(label = as.character(label))
@@ -291,7 +284,7 @@ text_df <- train_data %>%
 tokens <- text_df %>%
   unnest_tokens(word, text) %>%
   anti_join(stop_words, by = "word") %>%
-  filter(str_detect(word, "^[a-z]+$")) 
+  filter(str_detect(word, "^[a-z]+$"))
 
 word_counts <- tokens %>%
   group_by(label, word) %>%
@@ -327,10 +320,10 @@ filtered_word_counts <- word_counts %>%
 ham_words <- subset(filtered_word_counts, label == "ham")
 spam_words <- subset(filtered_word_counts, label == "spam")
 
-par(mfrow = c(1, 2), mar = c(0, 0, 3, 0)) 
+par(mfrow = c(1, 2), mar = c(0, 0, 3, 0))
 
-wordcloud(words = ham_words$word, 
-          freq = ham_words$n, 
+wordcloud(words = ham_words$word,
+          freq = ham_words$n,
           min.freq = 5,
           max.words = 100,
           scale = c(3, 0.5),
@@ -348,9 +341,49 @@ wordcloud(words = spam_words$word,
 par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
 ```
 
+```{r}
+# Top unique words in HAM
+if (length(ham_only_words) > 0) {
+  ham_unique_freq <- ham_word_freq[ham_only_words]
+  top_ham_unique <- head(sort(ham_unique_freq, decreasing = TRUE), 10)
+  data.frame(
+    Word = names(top_ham_unique),
+    Frequency = as.numeric(top_ham_unique),
+    row.names = NULL
+  )
+}
+```
+
+### 4. Dataset Statistics
+
+```{r}
+# Dataset overview
+dataset_stats <- data.frame(
+  Metric = c("Total messages", "SPAM messages", "HAM messages", "SPAM percentage"),
+  Value = c(
+    nrow(train_data),
+    sum(train_data$Category == "spam"),
+    sum(train_data$Category == "ham"),
+    paste0(round(100 * sum(train_data$Category == "spam") / nrow(train_data), 2), "%")
+  )
+)
+dataset_stats
+```
+
+```{r}
+# Vocabulary statistics
+vocab_stats <- data.frame(
+  Metric = c("Unique words in SPAM", "Unique words in HAM", "Total vocabulary size"),
+  Count = c(
+    length(spam_word_freq),
+    length(ham_word_freq),
+    length(union(names(spam_word_freq), names(ham_word_freq)))
+  )
+)
+vocab_stats
+```
 
 ## Classifier implementation
-
 
 ```{r classifier-implementation}
 naiveBayes <- setRefClass("naiveBayes",
@@ -457,21 +490,57 @@ naiveBayes <- setRefClass("naiveBayes",
       if (is.null(model) || length(model) == 0) {
         stop("Model not trained. Please call fit() first.")
       }
-      
-      predictions <- sapply(X_test, function(msg) .self$predict(msg))
-      
-      actuals <- as.character(y_test)
-      predictions <- as.character(predictions)
-      
-      correct_predictions <- sum(predictions == actuals)
-      total_predictions <- length(actuals)
+      # Get predictions for test data
+      predictions <- sapply(X_test, function(msg) predict(msg))
+
+      # Calculate accuracy
+      correct_predictions <- sum(predictions == y_test)
+      total_predictions <- length(y_test)
       accuracy <- correct_predictions / total_predictions
 
-      confusion_mat <- table(Actual = actuals, Predicted = predictions)
-      
+      # Create confusion matrix
+      classes <- sort(unique(c(predictions, y_test)))
+      confusion_matrix <- matrix(0, nrow = length(classes), ncol = length(classes))
+      rownames(confusion_matrix) <- paste("Predicted", classes)
+      colnames(confusion_matrix) <- paste("Actual", classes)
+
+      for (i in seq_along(predictions)) {
+        pred_idx <- which(classes == predictions[i])
+        actual_idx <- which(classes == y_test[i])
+        confusion_matrix[pred_idx, actual_idx] <- confusion_matrix[pred_idx, actual_idx] + 1
+      }
+
+      # Calculate precision, recall, F1 for each class
+      results <- data.frame(
+        Class = classes,
+        Precision = numeric(length(classes)),
+        Recall = numeric(length(classes)),
+        F1_Score = numeric(length(classes)),
+        stringsAsFactors = FALSE
+      )
+
+      for (i in seq_along(classes)) {
+        cls <- classes[i]
+        tp <- confusion_matrix[i, i] # true positives
+        fp <- sum(confusion_matrix[i, ]) - tp # false positives
+        fn <- sum(confusion_matrix[, i]) - tp # false negatives
+
+        precision <- if (tp + fp == 0) 0 else tp / (tp + fp)
+        recall <- if (tp + fn == 0) 0 else tp / (tp + fn)
+        f1 <- if (precision + recall == 0) 0 else 2 * (precision * recall) / (precision + recall)
+
+        results[i, "Precision"] <- round(precision, 4)
+        results[i, "Recall"] <- round(recall, 4)
+        results[i, "F1_Score"] <- round(f1, 4)
+      }
+
+      # Return comprehensive results
       return(list(
-        accuracy = accuracy,
-        confusion_matrix = confusion_mat
+        accuracy = round(accuracy, 4),
+        correct = correct_predictions,
+        total = total_predictions,
+        confusion_matrix = confusion_matrix,
+        class_metrics = results
       ))
     }
   )
@@ -497,3 +566,311 @@ test_data <- read_csv("data/4-spam/test.csv", show_col_types = FALSE)
 test_predictions <- sapply(test_data$Message, function(msg) model$predict(msg))
 print(paste("First 5 predictions:", paste(test_predictions[1:5], collapse = ", ")))
 ```
+
+## Parameter Comparison Experiments
+
+### Testing Different Preprocessing Parameters
+
+```{r}
+# Load test data for evaluation
+test_data <- read_csv("data/4-spam/test.csv", show_col_types = FALSE)
+
+# Define different parameter combinations to test
+experiments <- list(
+  "Baseline (Lemma + No Stopwords + Unigrams + Special)" = list(
+    do_stem = FALSE, do_lemma = TRUE, remove_stopwords = FALSE,
+    ngram = 1, tokenize_special = TRUE
+  ),
+  "Stemming + Stopwords + Unigrams + Special" = list(
+    do_stem = TRUE, do_lemma = FALSE, remove_stopwords = TRUE,
+    ngram = 1, tokenize_special = TRUE
+  ),
+  "Lemma + Stopwords + Bigrams + Special" = list(
+    do_stem = FALSE, do_lemma = TRUE, remove_stopwords = TRUE,
+    ngram = 2, tokenize_special = TRUE
+  ),
+  "Lemma + Stopwords + Trigrams + Special" = list(
+    do_stem = FALSE, do_lemma = TRUE, remove_stopwords = TRUE,
+    ngram = 3, tokenize_special = TRUE
+  ),
+  "Lemma + Stopwords + Unigrams + No Special" = list(
+    do_stem = FALSE, do_lemma = TRUE, remove_stopwords = TRUE,
+    ngram = 1, tokenize_special = FALSE
+  )
+)
+
+# Store results for comparison
+experiment_results <- list()
+confusion_matrices <- list()
+
+# Run experiments
+for (exp_name in names(experiments)) {
+  params <- experiments[[exp_name]]
+
+  # Create and train model with specific parameters
+  model_exp <- naiveBayes()
+  model_exp$fit(
+    X = train_data$Message,
+    y = train_data$Category,
+    do_stem = params$do_stem,
+    do_lemma = params$do_lemma,
+    remove_stopwords = params$remove_stopwords,
+    ngram = params$ngram,
+    tokenize_special = params$tokenize_special
+  )
+
+  # Evaluate on test data
+  results <- model_exp$score(test_data$Message, test_data$Category)
+
+  # Store results
+  experiment_results[[exp_name]] <- results
+  confusion_matrices[[exp_name]] <- results$confusion_matrix
+}
+
+# Display experiment progress
+data.frame(
+  Experiment = names(experiment_results),
+  Accuracy = round(sapply(experiment_results, function(x) x$accuracy), 4),
+  Correct_Predictions = sapply(experiment_results, function(x) paste0(x$correct, "/", x$total))
+)
+```
+
+### Results Summary Table
+
+```{r}
+# Create comprehensive comparison table
+comparison_data <- data.frame(
+  Experiment = names(experiment_results),
+  Accuracy = sapply(experiment_results, function(x) x$accuracy),
+  Correct = sapply(experiment_results, function(x) x$correct),
+  Total = sapply(experiment_results, function(x) x$total),
+  SPAM_Precision = sapply(experiment_results, function(x) {
+    spam_row <- which(x$class_metrics$Class == "spam")
+    if (length(spam_row) > 0) x$class_metrics$Precision[spam_row] else 0
+  }),
+  SPAM_Recall = sapply(experiment_results, function(x) {
+    spam_row <- which(x$class_metrics$Class == "spam")
+    if (length(spam_row) > 0) x$class_metrics$Recall[spam_row] else 0
+  }),
+  SPAM_F1 = sapply(experiment_results, function(x) {
+    spam_row <- which(x$class_metrics$Class == "spam")
+    if (length(spam_row) > 0) x$class_metrics$F1_Score[spam_row] else 0
+  }),
+  HAM_Precision = sapply(experiment_results, function(x) {
+    ham_row <- which(x$class_metrics$Class == "ham")
+    if (length(ham_row) > 0) x$class_metrics$Precision[ham_row] else 0
+  }),
+  HAM_Recall = sapply(experiment_results, function(x) {
+    ham_row <- which(x$class_metrics$Class == "ham")
+    if (length(ham_row) > 0) x$class_metrics$Recall[ham_row] else 0
+  }),
+  HAM_F1 = sapply(experiment_results, function(x) {
+    ham_row <- which(x$class_metrics$Class == "ham")
+    if (length(ham_row) > 0) x$class_metrics$F1_Score[ham_row] else 0
+  }),
+  stringsAsFactors = FALSE
+)
+```
+
+```{r}
+# Display compact results table with better formatting
+compact_results <- data.frame(
+  Configuration = c("1. Baseline", "2. Stemming", "3. Bigrams", "4. Trigrams", "5. No Special"),
+  Accuracy = paste0(round(comparison_data$Accuracy * 100, 1), "%"),
+  Predictions = paste0(comparison_data$Correct, "/", comparison_data$Total),
+  SPAM_F1 = round(comparison_data$SPAM_F1, 3),
+  HAM_F1 = round(comparison_data$HAM_F1, 3)
+)
+compact_results
+```
+
+```{r}
+# Detailed SPAM metrics table
+spam_metrics <- data.frame(
+  Configuration = c("Baseline", "Stemming", "Bigrams", "Trigrams", "No Special"),
+  Precision = round(comparison_data$SPAM_Precision, 3),
+  Recall = round(comparison_data$SPAM_Recall, 3),
+  F1_Score = round(comparison_data$SPAM_F1, 3)
+)
+print("SPAM Detection Performance:")
+spam_metrics
+```
+
+```{r}
+# Detailed HAM metrics table
+ham_metrics <- data.frame(
+  Configuration = c("Baseline", "Stemming", "Bigrams", "Trigrams", "No Special"),
+  Precision = round(comparison_data$HAM_Precision, 3),
+  Recall = round(comparison_data$HAM_Recall, 3),
+  F1_Score = round(comparison_data$HAM_F1, 3)
+)
+print("HAM Detection Performance:")
+ham_metrics
+```
+
+### 1. Acсuracy Comparison Bar Plot
+
+```{r fig.width=12, fig.height=6}
+# Prepare data for plotting
+plot_data <- comparison_data
+plot_data$Experiment <- factor(plot_data$Experiment, levels = plot_data$Experiment)
+
+ggplot(plot_data, aes(x = Experiment, y = Accuracy, fill = Experiment)) +
+  geom_col(alpha = 0.8, width = 0.7) +
+  geom_text(aes(label = paste0(round(Accuracy * 100, 2), "%")),
+    vjust = -0.5, size = 4, fontface = "bold"
+  ) +
+  scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    legend.position = "none",
+    plot.title = element_text(size = 16, hjust = 0.5),
+    axis.title = element_text(size = 12)
+  ) +
+  labs(
+    title = "Model Accuracy Comparison Across Different Parameters",
+    subtitle = "Higher is better",
+    x = "Parameter Configuration",
+    y = "Accuracy"
+  )
+```
+
+### 2. Detailed Metrics Comparison
+
+```{r fig.width=14, fig.height=8}
+metrics_long <- comparison_data %>%
+  select(
+    Experiment, SPAM_Precision, SPAM_Recall, SPAM_F1,
+    HAM_Precision, HAM_Recall, HAM_F1
+  ) %>%
+  pivot_longer(cols = -Experiment, names_to = "Metric", values_to = "Value") %>%
+  separate(Metric, into = c("Class", "Metric_Type"), sep = "_")
+
+# Create detailed metrics plot
+ggplot(metrics_long, aes(x = Experiment, y = Value, fill = Metric_Type)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  facet_wrap(~Class, ncol = 2, scales = "free") +
+  geom_text(aes(label = round(Value, 3)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.5, size = 3
+  ) +
+  scale_y_continuous(limits = c(0, 1.1)) +
+  scale_fill_brewer(type = "qual", palette = "Set1") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+    strip.text = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 16, hjust = 0.5)
+  ) +
+  labs(
+    title = "Detailed Performance Metrics by Class",
+    subtitle = "Precision, Recall, and F1-Score for SPAM and HAM detection",
+    x = "Parameter Configuration",
+    y = "Score",
+    fill = "Metric"
+  )
+```
+
+### 3. Confusion Matrices Visualization
+
+```{r fig.width=16, fig.height=12}
+# Create a function to plot confusion matrix with TP/TN/FP/FN labels
+plot_confusion_matrix <- function(cm, title) {
+  # Convert to data frame for ggplot
+  cm_df <- expand.grid(
+    Predicted = rownames(cm),
+    Actual = colnames(cm)
+  )
+  cm_df$Count <- as.vector(cm)
+
+  # Calculate percentages
+  total <- sum(cm)
+  cm_df$Percentage <- cm_df$Count / total * 100
+
+  # Add TP/TN/FP/FN labels
+  cm_df$Label <- ""
+
+  # Extract class names from Predicted and Actual columns (remove "Predicted " and "Actual " prefixes)
+  cm_df$pred_class <- gsub("Predicted ", "", cm_df$Predicted)
+  cm_df$actual_class <- gsub("Actual ", "", cm_df$Actual)
+
+  for (i in seq_len(nrow(cm_df))) {
+    pred <- cm_df$pred_class[i]
+    actual <- cm_df$actual_class[i]
+
+    if (pred == actual) {
+      if (pred == "spam") {
+        cm_df$Label[i] <- "TRUE POSITIVE"
+      } else {
+        cm_df$Label[i] <- "TRUE NEGATIVE"
+      }
+    } else {
+      if (pred == "spam") {
+        cm_df$Label[i] <- "FALSE POSITIVE"
+      } else {
+        cm_df$Label[i] <- "FALSE NEGATIVE"
+      }
+    }
+  }
+
+  ggplot(cm_df, aes(x = Actual, y = Predicted, fill = Count)) +
+    geom_tile(color = "white", size = 1) +
+    geom_text(aes(label = paste0(Label, "\n", Count, "\n(", round(Percentage, 1), "%)")),
+      size = 3, fontface = "bold"
+    ) +
+    scale_fill_gradient(low = "lightblue", high = "darkblue") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 11, hjust = 0.5),
+      axis.title = element_text(size = 10),
+      legend.position = "none"
+    ) +
+    labs(title = title, x = "Actual", y = "Predicted")
+}
+
+# Create plots for all confusion matrices
+confusion_plots <- list()
+for (i in seq_along(confusion_matrices)) {
+  exp_name <- names(confusion_matrices)[i]
+  # Shorten title for better display
+  short_title <- gsub("Baseline \\(|\\)", "", exp_name)
+  short_title <- gsub(" \\+ ", "\n+ ", short_title)
+  confusion_plots[[i]] <- plot_confusion_matrix(confusion_matrices[[i]], short_title)
+}
+
+# Arrange plots in a grid (3x2 for 5 experiments)
+do.call(grid.arrange, c(confusion_plots, ncol = 3))
+```
+
+### 4. Best Configuration Analysis
+
+```{r}
+# Find best performing configuration
+best_accuracy_idx <- which.max(comparison_data$Accuracy)
+best_config <- comparison_data[best_accuracy_idx, ]
+
+# Best configuration summary
+best_summary <- data.frame(
+  Metric = c("Best Configuration", "Accuracy (%)", "SPAM F1-Score", "HAM F1-Score"),
+  Value = c(
+    as.character(best_config$Experiment),
+    paste0(round(best_config$Accuracy * 100, 2), "%"),
+    round(best_config$SPAM_F1, 4),
+    round(best_config$HAM_F1, 4)
+  )
+)
+best_summary
+```
+
+## Conclusions
+
+**Mathematical Foundation:** We implemented a Multinomial Naive Bayes classifier based on Bayes' theorem: P(class|message) ∝ P(class) × ∏P(word|class). The method uses Laplace smoothing and log-probabilities to avoid numerical underflow.
+
+**Pros:** Simple, fast, works well with small datasets, handles high-dimensional sparse data effectively, probabilistic output.
+
+**Cons:** Strong independence assumption (words are independent), sensitive to skewed data, poor performance with unseen word combinations in test data.
+
+**Accuracy vs F1-Score:** Accuracy can be misleading with imbalanced datasets (e.g., 95% ham, 5% spam). A model predicting "all ham" would have 95% accuracy but 0% spam detection. F1-score balances precision and recall, providing better insight into performance on minority classes, which is crucial for spam detection where missing spam (false negatives) is costly.
+>>>>>>> feature/score
