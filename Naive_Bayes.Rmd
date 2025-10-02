@@ -19,13 +19,13 @@ knitr::opts_chunk$set(echo = TRUE)
 -   *Anastasiya Shopska*:
 ## Package Installation
 
-```{r eval=FALSE}
+```{r install-packages, eval=FALSE}
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
 install.packages(c("readr", "stringi", "tokenizers", "SnowballC", "textstem"))
 ```
 
 ## Setup
-```{r}
+```{r include-packages}
 library(readr)
 library(textstem)
 library(stringi)
@@ -35,7 +35,7 @@ library(SnowballC)
 
 ## Helper functions for text preprocessing
 
-```{r}
+```{r helper-data-clean}
 # Remove stopwords from a vector of tokens (preserving order and duplicates)
 remove_stopwords_from_tokens <- function(tokens, stopwords_list) {
   tokens[!tokens %in% stopwords_list]
@@ -72,7 +72,7 @@ generate_ngrams_from_tokens <- function(tokens, n) {
 ```
 
 ## Text Preprocessing Pipeline
-```{r}
+```{r text-preprocess}
 #' Build Text Preprocessing Pipeline for SMS Spam Classification
 #'
 #' @param texts Character vector of text messages to preprocess
@@ -226,7 +226,7 @@ build_preprocessing_pipeline <- function(texts,
 
 ## Example Usage
 
-```{r}
+```{r example-usage}
 train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
 
 train_preprocessed <- build_preprocessing_pipeline(
@@ -259,7 +259,7 @@ dtm_top <- dtm[, top_terms]
 
 dtm_top[1:5, ]
 ```
-```{r}
+```{r run-usage}
 top_terms_table
 ```
 
@@ -267,87 +267,92 @@ top_terms_table
 ## Visualisation of data
 
 
+```{r load-packages-visual, eval=FALSE}
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+install.packages(c("tidyverse", "tidytext", "ggplot2", "wordcloud", "RColorBrewer"))
+```
 
-
-
-```{r}
+```{r incluade-packages-visual}
 library(tidyverse)
 library(tidytext)
 library(ggplot2)
 library(wordcloud)
 library(RColorBrewer)
-
-
 ```
 
+```{r text-preprocessing-visual}
+text_df <- train_data %>% 
+  rename(
+    text = Message, 
+    label = Category
+  ) %>%
+  mutate(label = as.character(label))
 
-
-```{r}
-# Example structure
-# text_df has two columns: "text" and "label" (positive/negative)
-text_df <- data.frame(
-  text = c("I love this movie, amazing!",
-           "This was the worst experience ever",
-           "Absolutely fantastic service",
-           "Terrible quality, never again"),
-  label = c("positive", "negative", "positive", "negative")
-)
-
-#       text                               label
-# 1 "I love this movie, amazing!"         positive
-# 2 "This was the worst experience ever"  negative
-```
-
-```{r}
 tokens <- text_df %>%
   unnest_tokens(word, text) %>%
-  anti_join(stop_words, by = "word")
+  anti_join(stop_words, by = "word") %>%
+  filter(str_detect(word, "^[a-z]+$")) 
 
-```
-
-```{r}
 word_counts <- tokens %>%
   group_by(label, word) %>%
-  summarise(n = n()) %>%
+  summarise(n = n(), .groups = 'drop') %>%
   arrange(desc(n))
 
+head(word_counts, 10)
 ```
 
-```{r}
+```{r top-words-by-class}
+top_words_by_class <- word_counts %>%
+  group_by(label) %>%
+  filter(!word %in% c("email", "url", "phone", "money", "longnum")) %>%
+  top_n(15, n) %>%
+  ungroup()
 
-word_counts %>%
+top_words_by_class %>%
   ggplot(aes(x = reorder(word, n), y = n, fill = label)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~label, scales = "free") +
   coord_flip() +
-  labs(title = "Most common words in positive vs negative reviews",
-       x = "Word", y = "Frequency")
+  labs(
+    title = "15 Most Common Words in Ham vs Spam Messages",
+    x = "Word",
+    y = "Frequency"
+  )
 ```
 
-```{r}
-positive_words <- subset(word_counts, label == "positive")
-negative_words <- subset(word_counts, label == "negative")
+```{r word-cloud}
+filtered_word_counts <- word_counts %>%
+  filter(!word %in% c("email", "url", "phone", "money", "longnum"))
 
-par(mfrow = c(1,2)) # side-by-side plots
+ham_words <- subset(filtered_word_counts, label == "ham")
+spam_words <- subset(filtered_word_counts, label == "spam")
 
-wordcloud(words = positive_words$word, 
-          freq = positive_words$n, 
-          min.freq = 1,     # ↓ дозволить малювати навіть слова з 1 входженням
-          scale = c(2, 0.5),
-          colors = brewer.pal(8, "Greens"))
+par(mfrow = c(1, 2), mar = c(0, 0, 3, 0)) 
 
-wordcloud(words = positive_words$word, 
-          freq = positive_words$n, 
-          min.freq = 1,     #  дозволить малювати навіть слова з 1 входженням
-          scale = c(2, 0.5),
-          colors = brewer.pal(8, "Reds"))
+wordcloud(words = ham_words$word, 
+          freq = ham_words$n, 
+          min.freq = 5,
+          max.words = 100,
+          scale = c(3, 0.5),
+          colors = brewer.pal(8, "Dark2"),
+          main = "Ham words")
+
+wordcloud(words = spam_words$word,
+          freq = spam_words$n,
+          min.freq = 5,
+          max.words = 100,
+          scale = c(3, 0.5),
+          colors = brewer.pal(8, "Set1"),
+          main = "Spam words")
+
+par(mfrow = c(1, 1), mar = c(5.1, 4.1, 4.1, 2.1))
 ```
-
 
 
 ## Classifier implementation
 
-```{r}
+
+```{r classifier-implementation}
 naiveBayes <- setRefClass("naiveBayes",
   fields = list(
     model = "list",
@@ -449,7 +454,25 @@ naiveBayes <- setRefClass("naiveBayes",
       return(predictions)
     },
     score = function(X_test, y_test) {
-      # TODO
+      if (is.null(model) || length(model) == 0) {
+        stop("Model not trained. Please call fit() first.")
+      }
+      
+      predictions <- sapply(X_test, function(msg) .self$predict(msg))
+      
+      actuals <- as.character(y_test)
+      predictions <- as.character(predictions)
+      
+      correct_predictions <- sum(predictions == actuals)
+      total_predictions <- length(actuals)
+      accuracy <- correct_predictions / total_predictions
+
+      confusion_mat <- table(Actual = actuals, Predicted = predictions)
+      
+      return(list(
+        accuracy = accuracy,
+        confusion_matrix = confusion_mat
+      ))
     }
   )
 )
@@ -457,9 +480,11 @@ naiveBayes <- setRefClass("naiveBayes",
 model <- naiveBayes()
 ```
 
+
 ## Example Usage
 
-```{r}
+
+```{r run-usage-classified}
 train_data <- read_csv("data/4-spam/train.csv", show_col_types = FALSE)
 model <- naiveBayes()
 model$fit(X = train_data$Message, y = train_data$Category)
@@ -471,4 +496,12 @@ print(paste("Prediction:", prediction))
 test_data <- read_csv("data/4-spam/test.csv", show_col_types = FALSE)
 test_predictions <- sapply(test_data$Message, function(msg) model$predict(msg))
 print(paste("First 5 predictions:", paste(test_predictions[1:5], collapse = ", ")))
+```
+
+```{r run-usage-eval}
+test_results <- model$score(X_test = test_data$Message, y_test = test_data$Category)
+
+print(paste("Test Accuracy:", round(test_results$accuracy, 4)))
+print("Confusion Matrix:")
+print(test_results$confusion_matrix)
 ```
